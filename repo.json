@@ -1,0 +1,8 @@
+{
+  "name": "CloudStream FR",
+  "description": "Extensions CloudStream françaises reconstruites et patchées",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/builds/plugins.json"
+  ]
+}

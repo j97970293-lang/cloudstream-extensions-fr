@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+  <html lang="fr">
+  <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nuvio — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+  :root{
+    --bg:#080b14;--surface:#0e1220;--s2:#141827;--s3:#1c2238;
+    --border:#222844;--b2:#2a3358;
+    --text:#e6ecf8;--muted:#6b7a9e;--muted2:#4a5578;
+    --accent:#6c63ff;--ag:rgba(108,99,255,.15);
+    --green:#22d3a5;--red:#f56565;--yellow:#f6ad55;
+    --r:16px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;min-height:100vh}
+
+  /* ── HEADER ───────────────────────────────────────────────── */
+  header{
+    background:linear-gradient(180deg,rgba(14,18,32,.98),rgba(8,11,20,.96));
+    border-bottom:1px solid var(--border);
+    padding:0 24px;height:64px;
+    display:flex;align-items:center;gap:14px;
+    position:sticky;top:0;z-index:30;
+    backdrop-filter:blur(12px);
+  }
+  .logo{
+    width:36px;height:36px;border-radius:10px;flex-shrink:0;
+    background:linear-gradient(135deg,#6c63ff,#4e46e5);
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 0 20px rgba(108,99,255,.5);
+  }
+  .logo svg{color:#fff}
+  .hinfo h1{font-size:16px;font-weight:700;letter-spacing:-.3px}
+  .hinfo p{font-size:11.5px;color:var(--muted);margin-top:1px}
+  .hpill{
+    margin-left:auto;display:flex;align-items:center;gap:7px;
+    padding:6px 14px;border-radius:99px;font-size:12px;font-weight:600;
+    border:1px solid; transition:all .3s;
+  }
+  .hpill.ok{background:rgba(34,211,165,.08);border-color:rgba(34,211,165,.3);color:var(--green)}
+  .hpill.ok .dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+  .hpill.err{background:rgba(245,101,101,.08);border-color:rgba(245,101,101,.3);color:var(--red)}
+  .hpill.err .dot{width:6px;height:6px;border-radius:50%;background:var(--red)}
+  .hpill.loading{background:rgba(108,99,255,.08);border-color:rgba(108,99,255,.3);color:var(--accent)}
+  .hpill.loading .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+  main{max-width:920px;margin:0 auto;padding:28px 16px 48px}
+
+  /* ── ADDON LINK ───────────────────────────────────────────── */
+  .addon-bar{
+    display:flex;align-items:center;gap:12px;
+    background:var(--surface);border:1px solid var(--b2);
+    border-radius:14px;padding:14px 18px;margin-bottom:22px;
+    flex-wrap:wrap;row-gap:10px;
+  }
+  .addon-bar .ab-left{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+  .ab-icon{
+    width:34px;height:34px;border-radius:9px;flex-shrink:0;
+    background:var(--ag);border:1px solid rgba(108,99,255,.35);
+    display:flex;align-items:center;justify-content:center;color:var(--accent)
+  }
+  .ab-label{font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;margin-bottom:3px}
+  .ab-url{
+    font-size:12px;font-family:monospace;color:var(--text);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .btn-copy{
+    background:var(--accent);color:#fff;border:none;border-radius:10px;
+    padding:9px 18px;font-size:12.5px;font-weight:600;cursor:pointer;
+    font-family:inherit;display:flex;align-items:center;gap:6px;
+    transition:opacity .2s,transform .15s;white-space:nowrap;flex-shrink:0;
+  }
+  .btn-copy:hover{opacity:.85;transform:translateY(-1px)}
+  .btn-copy:active{transform:translateY(0)}
+
+  /* ── STATS ────────────────────────────────────────────────── */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:28px}
+  .stat{
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:14px;padding:16px;
+  }
+  .stat-num{font-size:24px;font-weight:800;letter-spacing:-.5px}
+  .stat-lbl{font-size:11px;color:var(--muted);margin-top:3px;font-weight:500}
+  .stat.accent .stat-num{color:var(--accent)}
+  .stat.green .stat-num{color:var(--green)}
+
+  /* ── SECTION HEADER ───────────────────────────────────────── */
+  .sh{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .sh-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+  .sh-line{flex:1;height:1px;background:var(--border)}
+
+  /* ── PROVIDER GRID ────────────────────────────────────────── */
+  .pgrid{display:grid;gap:10px;margin-bottom:32px}
+
+  /* ── PROVIDER CARD ────────────────────────────────────────── */
+  .pcard{
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--r);padding:18px 20px;
+    display:flex;align-items:center;gap:16px;
+    position:relative;overflow:hidden;
+    transition:border-color .25s,box-shadow .25s,opacity .25s;
+  }
+  /* left accent stripe */
+  .pcard::before{
+    content:'';position:absolute;left:0;top:0;bottom:0;width:4px;
+    border-radius:4px 0 0 4px;
+    background:var(--border);transition:background .25s;
+  }
+  .pcard.on::before{background:var(--pcolor,var(--green))}
+  .pcard.on{box-shadow:0 0 0 1px var(--border),inset 0 0 40px rgba(0,0,0,.2)}
+  .pcard.on:hover{border-color:var(--pcolor,var(--accent));box-shadow:0 0 0 1px var(--pcolor,var(--accent)),0 6px 30px rgba(0,0,0,.35)}
+  .pcard.off{opacity:.48}
+  .pcard.off:hover{opacity:.65}
+  .pcard.pending::before{background:var(--yellow)}
+  .pcard.pending{opacity:.75}
+
+  /* ── PROVIDER LOGO ────────────────────────────────────────── */
+  .plogo-wrap{
+    width:52px;height:52px;border-radius:14px;flex-shrink:0;overflow:hidden;
+    border:1px solid var(--border);
+    background:var(--s2);
+    display:flex;align-items:center;justify-content:center;
+    position:relative;
+  }
+  .plogo-wrap img{
+    width:100%;height:100%;object-fit:contain;
+    border-radius:13px;display:block;
+  }
+  .plogo-letter{
+    width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+    font-weight:800;font-size:17px;letter-spacing:-.5px;color:#fff;
+    border-radius:13px;
+    background:linear-gradient(135deg,var(--pcolor1,#444),var(--pcolor2,#222));
+  }
+  /* ON badge glow on logo */
+  .pcard.on .plogo-wrap{box-shadow:0 0 14px rgba(var(--pglow,108,99,255),.4)}
+
+  /* ── PROVIDER INFO ────────────────────────────────────────── */
+  .pinfo{flex:1;min-width:0}
+  .pname{font-size:15.5px;font-weight:700;letter-spacing:-.3px;display:flex;align-items:center;gap:8px}
+  .pdesc{font-size:12px;color:var(--muted);margin-top:3px;line-height:1.5}
+  .pstatus{
+    display:inline-flex;align-items:center;gap:5px;
+    margin-top:7px;padding:3px 9px;border-radius:6px;
+    font-size:11px;font-weight:600;letter-spacing:.02em;
+  }
+  .pstatus.on{background:rgba(34,211,165,.12);color:var(--green);border:1px solid rgba(34,211,165,.25)}
+  .pstatus.on .dot{width:5px;height:5px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+  .pstatus.off{background:rgba(255,255,255,.04);color:var(--muted2);border:1px solid rgba(255,255,255,.06)}
+  .pstatus.off .dot{width:5px;height:5px;border-radius:50%;background:var(--muted2)}
+  .pstatus.pending{background:rgba(246,173,85,.1);color:var(--yellow);border:1px solid rgba(246,173,85,.25)}
+  .pstatus.pending .dot{width:5px;height:5px;border-radius:50%;background:var(--yellow);animation:pulse 1s infinite}
+
+  /* ── ACTIONS ──────────────────────────────────────────────── */
+  .pactions{display:flex;align-items:center;gap:10px;flex-shrink:0}
+  .btn-upd{
+    background:var(--s2);border:1px solid var(--border);color:var(--muted);
+    padding:8px 13px;border-radius:10px;cursor:pointer;font-family:inherit;
+    font-size:12px;font-weight:500;display:flex;align-items:center;gap:5px;
+    transition:all .2s;white-space:nowrap;
+  }
+  .btn-upd:hover{border-color:var(--accent);color:var(--accent);background:var(--ag)}
+
+  /* ── TOGGLE ───────────────────────────────────────────────── */
+  .toggle{position:relative;width:46px;height:26px;cursor:pointer;flex-shrink:0}
+  .toggle input{opacity:0;width:0;height:0;position:absolute}
+  .tslider{
+    position:absolute;inset:0;border-radius:26px;
+    background:var(--s3);border:1.5px solid var(--b2);
+    transition:.25s;
+  }
+  .tslider::before{
+    content:'';position:absolute;left:3px;top:3px;
+    width:18px;height:18px;border-radius:50%;
+    background:var(--muted2);transition:.25s;
+  }
+  .toggle input:checked + .tslider{
+    background:var(--pcolor,var(--accent));
+    border-color:var(--pcolor,var(--accent));
+  }
+  .toggle input:checked + .tslider::before{transform:translateX(20px);background:#fff}
+
+  /* ── TEST PANEL ───────────────────────────────────────────── */
+  .test-overlay{
+    display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);
+    z-index:60;align-items:flex-end;justify-content:center;padding:0;
+    backdrop-filter:blur(8px);
+  }
+  .test-overlay.open{display:flex}
+  .test-panel{
+    background:var(--surface);border:1px solid var(--b2);
+    border-radius:var(--r) var(--r) 0 0;
+    width:100%;max-width:760px;max-height:88vh;
+    display:flex;flex-direction:column;
+    box-shadow:0 -20px 60px rgba(0,0,0,.6);
+    animation:slideUp .22s ease;
+  }
+  .test-panel-head{
+    display:flex;align-items:center;gap:12px;
+    padding:20px 24px 16px;border-bottom:1px solid var(--border);
+    flex-shrink:0;
+  }
+  .test-panel-head h3{font-size:15px;font-weight:700;flex:1}
+  .test-panel-head p{font-size:12px;color:var(--muted);margin-top:2px}
+  .test-controls{
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    padding:14px 24px;border-bottom:1px solid var(--border);flex-shrink:0;
+  }
+  .test-mode-btn{
+    padding:7px 14px;border-radius:8px;border:1.5px solid var(--border);
+    background:var(--s2);color:var(--muted);font-size:12px;font-weight:600;
+    cursor:pointer;font-family:inherit;transition:all .2s;
+  }
+  .test-mode-btn.active{background:var(--ag);border-color:var(--accent);color:var(--accent)}
+  .test-ep-inputs{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+  .test-ep-inputs input{
+    width:48px;padding:6px 8px;border-radius:7px;
+    border:1.5px solid var(--border);background:var(--s2);color:var(--text);
+    font-size:12px;font-family:inherit;outline:none;text-align:center;
+    transition:border-color .2s;
+  }
+  .test-ep-inputs input:focus{border-color:var(--accent)}
+  .btn-run-test{
+    margin-left:auto;background:var(--accent);color:#fff;border:none;
+    border-radius:9px;padding:9px 20px;font-size:13px;font-weight:700;
+    cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:6px;
+    transition:opacity .2s,transform .15s;white-space:nowrap;
+  }
+  .btn-run-test:hover{opacity:.88;transform:translateY(-1px)}
+  .btn-run-test:disabled{opacity:.45;cursor:not-allowed;transform:none}
+  .test-body{flex:1;overflow-y:auto;padding:16px 24px 24px}
+  .test-empty{
+    text-align:center;color:var(--muted);padding:40px 0;font-size:13px;line-height:2;
+  }
+  .test-result-meta{
+    display:flex;align-items:center;gap:12px;margin-bottom:14px;
+    padding:10px 14px;background:var(--s2);border-radius:10px;flex-wrap:wrap;
+  }
+  .test-result-meta .trm-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+  .test-result-meta .trm-val{font-size:13px;font-weight:600}
+  .trm-val.ok{color:var(--green)}
+  .trm-val.err{color:var(--red)}
+  .stream-list{display:flex;flex-direction:column;gap:8px}
+  .stream-item{
+    background:var(--s2);border:1px solid var(--border);border-radius:10px;
+    padding:12px 14px;
+  }
+  .stream-item:hover{border-color:var(--b2)}
+  .stream-top{display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap}
+  .stream-badge{
+    padding:2px 8px;border-radius:5px;font-size:10.5px;font-weight:700;
+    letter-spacing:.03em;white-space:nowrap;
+  }
+  .stream-badge.q4k{background:rgba(108,99,255,.2);color:#a78bfa;border:1px solid rgba(108,99,255,.3)}
+  .stream-badge.q1080{background:rgba(34,211,165,.15);color:var(--green);border:1px solid rgba(34,211,165,.25)}
+  .stream-badge.q720{background:rgba(246,173,85,.12);color:var(--yellow);border:1px solid rgba(246,173,85,.2)}
+  .stream-badge.qhd{background:rgba(255,255,255,.06);color:var(--muted);border:1px solid rgba(255,255,255,.08)}
+  .stream-badge.lang{background:rgba(255,255,255,.05);color:var(--muted);border:1px solid rgba(255,255,255,.07)}
+  .stream-badge.fmt{background:rgba(255,255,255,.04);color:var(--muted2);border:1px solid rgba(255,255,255,.06)}
+  .stream-name{font-size:12.5px;font-weight:600;color:var(--text)}
+  .stream-url{
+    font-size:10.5px;font-family:monospace;color:var(--muted);
+    word-break:break-all;line-height:1.5;
+  }
+  .stream-url a{color:var(--accent);text-decoration:none}
+  .stream-url a:hover{text-decoration:underline}
+  .test-error{
+    background:rgba(245,101,101,.08);border:1px solid rgba(245,101,101,.25);
+    border-radius:10px;padding:14px 18px;color:var(--red);font-size:13px;
+  }
+
+  /* ── ADD PANEL ────────────────────────────────────────────── */
+  .add-panel{
+    background:var(--surface);border:1px dashed var(--b2);
+    border-radius:var(--r);padding:24px;
+  }
+  .add-head{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+  .add-head .add-icon{
+    width:34px;height:34px;border-radius:9px;
+    background:var(--ag);border:1px solid rgba(108,99,255,.3);
+    display:flex;align-items:center;justify-content:center;color:var(--accent);flex-shrink:0;
+  }
+  .add-head h3{font-size:14px;font-weight:700}
+  .add-head p{font-size:12px;color:var(--muted);margin-top:2px}
+  .frow{display:flex;gap:10px;flex-wrap:wrap}
+  .finput{
+    flex:1;min-width:200px;padding:11px 15px;border-radius:11px;
+    border:1.5px solid var(--border);background:var(--s2);color:var(--text);
+    font-size:13px;font-family:inherit;outline:none;
+    transition:border-color .2s,box-shadow .2s;
+  }
+  .finput:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--ag)}
+  .finput::placeholder{color:var(--muted2)}
+  .btn-add{
+    background:var(--accent);color:#fff;border:none;border-radius:11px;
+    padding:11px 20px;font-size:13px;font-weight:700;cursor:pointer;
+    font-family:inherit;display:flex;align-items:center;gap:6px;
+    transition:opacity .2s,transform .15s;white-space:nowrap;
+  }
+  .btn-add:hover{opacity:.88;transform:translateY(-1px)}
+  .btn-add:active{transform:translateY(0)}
+  .btn-add:disabled{opacity:.4;cursor:not-allowed;transform:none}
+  .hint{font-size:12px;color:var(--muted);margin-top:12px;line-height:1.65}
+  .hint code{background:var(--s2);padding:1px 6px;border-radius:4px;font-size:11px}
+
+  /* ── MODAL ────────────────────────────────────────────────── */
+  .overlay{
+    display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);
+    z-index:50;align-items:center;justify-content:center;padding:16px;
+    backdrop-filter:blur(6px);
+  }
+  .overlay.open{display:flex}
+  .modal{
+    background:var(--surface);border:1px solid var(--b2);
+    border-radius:var(--r);padding:30px;width:100%;max-width:480px;
+    box-shadow:0 24px 80px rgba(0,0,0,.7);animation:slideUp .2s ease;
+  }
+  @keyframes slideUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+  .modal-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .modal h3{font-size:17px;font-weight:700}
+  .modal-desc{font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.5}
+  .modal-input{
+    width:100%;padding:12px 15px;border-radius:11px;
+    border:1.5px solid var(--border);background:var(--s2);color:var(--text);
+    font-size:13px;font-family:inherit;outline:none;margin-bottom:18px;
+    transition:border-color .2s,box-shadow .2s;
+  }
+  .modal-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--ag)}
+  .modal-acts{display:flex;gap:10px;justify-content:flex-end}
+  .btn-cancel{
+    background:var(--s2);border:1.5px solid var(--border);color:var(--muted);
+    padding:10px 20px;border-radius:10px;cursor:pointer;font-size:13px;
+    font-family:inherit;font-weight:500;transition:all .2s;
+  }
+  .btn-cancel:hover{color:var(--text);border-color:var(--b2)}
+  .btn-confirm{
+    background:var(--accent);color:#fff;border:none;
+    padding:10px 20px;border-radius:10px;cursor:pointer;font-size:13px;
+    font-weight:700;font-family:inherit;display:flex;align-items:center;gap:6px;
+    transition:opacity .2s;
+  }
+  .btn-confirm:hover{opacity:.88}
+  .btn-confirm:disabled{opacity:.4;cursor:not-allowed}
+
+  /* ── TOAST ────────────────────────────────────────────────── */
+  #toast{
+    position:fixed;bottom:24px;right:24px;max-width:340px;z-index:100;
+    background:var(--s2);border:1px solid var(--b2);border-radius:12px;
+    padding:13px 18px;font-size:13px;display:flex;align-items:center;gap:10px;
+    box-shadow:0 10px 40px rgba(0,0,0,.5);
+    opacity:0;transform:translateY(10px) scale(.97);
+    transition:opacity .3s,transform .3s;pointer-events:none;
+  }
+  #toast.show{opacity:1;transform:translateY(0) scale(1)}
+  #toast.ok{border-color:rgba(34,211,165,.4);color:var(--green)}
+  #toast.err{border-color:rgba(245,101,101,.4);color:var(--red)}
+
+  .spin{animation:spin .7s linear infinite;display:inline-block}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  @media(max-width:600px){
+    .stats{grid-template-columns:repeat(2,1fr)}
+    .pcard{padding:14px 14px}
+    .btn-upd span{display:none}
+    .addon-bar{flex-direction:column;align-items:flex-start}
+    header{padding:0 14px}
+    main{padding:16px 10px 40px}
+  }
+  </style>
+  </head>
+  <body>
+
+  <header>
+    <div class="logo">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+        <rect x="2" y="7" width="20" height="14" rx="2.5"/>
+        <path d="M16 3H8L6 7h12z"/>
+        <path d="M10 11.5l5.5 3-5.5 3z" fill="currentColor" stroke="none"/>
+      </svg>
+    </div>
+    <div class="hinfo">
+      <h1>Nuvio Dashboard</h1>
+      <p>Addon Stremio — Providers francophones</p>
+    </div>
+    <div class="hpill loading" id="hpill">
+      <span class="dot"></span>
+      <span id="hpill-txt">Chargement…</span>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ADDON LINK -->
+    <div class="addon-bar">
+      <div class="ab-left">
+        <div class="ab-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+          </svg>
+        </div>
+        <div style="min-width:0">
+          <div class="ab-label">Lien Addon Stremio</div>
+          <div class="ab-url" id="addon-url">Chargement…</div>
+        </div>
+      </div>
+      <button class="btn-copy" onclick="copyAddon()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3">
+          <rect x="9" y="9" width="13" height="13" rx="2"/>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+        </svg>
+        Copier
+      </button>
+    </div>
+
+    <!-- STATS -->
+    <div class="stats">
+      <div class="stat accent"><div class="stat-num" id="s-on">—</div><div class="stat-lbl">Providers actifs</div></div>
+      <div class="stat"><div class="stat-num" id="s-total">—</div><div class="stat-lbl">Total providers</div></div>
+      <div class="stat green"><div class="stat-num">ON</div><div class="stat-lbl">Filtre liens morts</div></div>
+      <div class="stat"><div class="stat-num" style="color:var(--yellow)">5 min</div><div class="stat-lbl">Cache streams</div></div>
+    </div>
+
+    <!-- PROVIDERS -->
+    <div class="sh"><span class="sh-title">Providers de streaming</span><div class="sh-line"></div></div>
+    <div class="pgrid" id="pgrid">
+      <div style="color:var(--muted);padding:24px 0;font-size:14px">Chargement des providers…</div>
+    </div>
+
+    <!-- ADD PROVIDER -->
+    <div class="sh" style="margin-top:8px"><span class="sh-title">Gestion</span><div class="sh-line"></div></div>
+    <div class="add-panel">
+      <div class="add-head">
+        <div class="add-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        </div>
+        <div>
+          <h3>Installer / mettre à jour un provider</h3>
+          <p>Le fichier sera ajouté au repo GitHub. Render redéploie en ~2 min.</p>
+        </div>
+      </div>
+      <div class="frow">
+        <input type="url" id="add-url"  class="finput" placeholder="https://exemple.com/provider.js"/>
+        <input type="text" id="add-name" class="finput" style="max-width:180px" placeholder="Nom (optionnel)"/>
+        <button class="btn-add" id="add-btn" onclick="addProvider()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+          Ajouter
+        </button>
+      </div>
+      <p class="hint">
+        Pour <strong>mettre à jour</strong> un provider existant, donne le même nom que le provider actuel.<br>
+        Formats acceptés : <code>.js</code> — le cache TMDB est vidé automatiquement après ajout.
+      </p>
+    </div>
+
+  </main>
+
+  <!-- TEST PANEL -->
+  <div class="test-overlay" id="test-overlay" onclick="if(event.target===this)closeTestPanel()">
+    <div class="test-panel">
+      <div class="test-panel-head">
+        <div>
+          <h3 id="test-panel-title">Tester le provider</h3>
+          <p id="test-panel-sub">Lancement d'une recherche réelle sur votre serveur</p>
+        </div>
+        <button onclick="closeTestPanel()" style="background:none;border:none;cursor:pointer;color:var(--muted);padding:4px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="test-controls">
+        <button class="test-mode-btn active" id="btn-mode-movie" onclick="setTestMode('movie')">🎬 Film — Inception</button>
+        <button class="test-mode-btn" id="btn-mode-tv" onclick="setTestMode('tv')">📺 Série — Breaking Bad</button>
+        <div class="test-ep-inputs" id="test-ep-inputs" style="display:none">
+          <span>S</span><input type="number" id="test-season" value="1" min="1" max="99">
+          <span>E</span><input type="number" id="test-episode" value="1" min="1" max="99">
+        </div>
+        <button class="btn-run-test" id="btn-run-test" onclick="runTest()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Lancer le test
+        </button>
+      </div>
+      <div class="test-body" id="test-body">
+        <div class="test-empty">
+          Sélectionnez le mode et cliquez sur <strong>Lancer le test</strong>.<br>
+          Le serveur fera une vraie recherche et affichera les liens trouvés.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- UPDATE MODAL -->
+  <div class="overlay" id="modal" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <div class="modal-head">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/><polyline points="21 3 21 9 15 9"/></svg>
+        <h3>Mettre à jour le provider</h3>
+      </div>
+      <p class="modal-desc" id="modal-desc">Entrez l'URL du fichier .js de remplacement pour ce provider.</p>
+      <input class="modal-input" type="url" id="modal-url" placeholder="https://exemple.com/provider.js"
+        onkeydown="if(event.key==='Enter')doUpdate()"/>
+      <div class="modal-acts">
+        <button class="btn-cancel" onclick="closeModal()">Annuler</button>
+        <button class="btn-confirm" id="modal-btn" onclick="doUpdate()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/><polyline points="21 3 21 9 15 9"/></svg>
+          Mettre à jour
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"><span id="t-ico"></span><span id="t-msg"></span></div>
+
+  <script>
+  // ── CONFIG ──────────────────────────────────────────────────────
+  const ADDON_URL = window.location.origin + '/manifest.json';
+
+  // Provider metadata: colors, logos, descriptions
+  const PM = {
+    frenchstream: {
+      name:'FrenchStream',
+      logo:null, abbr:'FS',
+      c1:'#2563eb',c2:'#1d4ed8',glow:'37,99,235',
+      color:'#60a5fa',
+      desc:'Films & séries en VF',
+      tags:['VF','HD']
+    },
+    movix: {
+      name:'Movix',
+      logo:'https://movix.fr/favicon.ico', abbr:'MX',
+      c1:'#7c3aed',c2:'#5b21b6',glow:'124,58,237',
+      color:'#a78bfa',
+      desc:'Multi-sources HD — VF & VOSTFR',
+      tags:['VF','VOSTFR','HD']
+    },
+    nakastream: {
+      name:'Nakastream',
+      logo:null, abbr:'NK',
+      c1:'#0891b2',c2:'#0e7490',glow:'8,145,178',
+      color:'#22d3ee',
+      desc:'VF · VOSTFR · MULTI — M3U8 HD',
+      tags:['VF','M3U8','HD']
+    },
+    nakios: {
+      name:'Nakios',
+      logo:'https://nakios.ink/favicon.png', abbr:'NI',
+      c1:'#d97706',c2:'#b45309',glow:'217,119,6',
+      color:'#fbbf24',
+      desc:'VF · VOSTFR · MULTI — 1080p / 4K',
+      tags:['VF','4K','1080p']
+    },
+    purstream: {
+      name:'Purstream',
+      logo:null, abbr:'PS',
+      c1:'#dc2626',c2:'#b91c1c',glow:'220,38,38',
+      color:'#f87171',
+      desc:'Streaming haute qualité — 4K / 1080p',
+      tags:['4K','1080p']
+    },
+    toflix: {
+      name:'Toflix',
+      logo:null, abbr:'TF',
+      c1:'#059669',c2:'#047857',glow:'5,150,105',
+      color:'#34d399',
+      desc:'FastFlux + Zeus SSE — VF',
+      tags:['VF','SSE']
+    },
+    vstream: {
+      name:'Vstream',
+      logo:null, abbr:'VS',
+      c1:'#db2777',c2:'#be185d',glow:'219,39,119',
+      color:'#f472b6',
+      desc:'VF · VOSTFR · MULTI — HD',
+      tags:['VF','VOSTFR','HD']
+    }
+  };
+
+  const SVG = {
+    refresh: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/><polyline points="21 3 21 9 15 9"/></svg>',
+    spin:    '<svg class="spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>',
+    plus:    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>',
+    check:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>',
+    x:       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  };
+
+  let currentTarget = null;
+
+  // ── INIT ────────────────────────────────────────────────────────
+  document.getElementById('addon-url').textContent = ADDON_URL;
+
+  // ── TOAST ───────────────────────────────────────────────────────
+  function toast(msg, type='ok') {
+    const el = document.getElementById('toast');
+    document.getElementById('t-ico').innerHTML = type === 'ok' ? SVG.check : SVG.x;
+    document.getElementById('t-msg').textContent = msg;
+    el.className = 'show ' + type;
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.className = '', 3500);
+  }
+
+  // ── COPY ────────────────────────────────────────────────────────
+  function copyAddon() {
+    navigator.clipboard.writeText(ADDON_URL)
+      .then(() => toast('Lien copié dans le presse-papier !'))
+      .catch(() => {
+        const ta = document.createElement('textarea');
+        ta.value = ADDON_URL; document.body.appendChild(ta);
+        ta.select(); document.execCommand('copy');
+        document.body.removeChild(ta);
+        toast('Lien copié !');
+      });
+  }
+
+  // ── BUILD LOGO HTML ─────────────────────────────────────────────
+  function logoHtml(name, m) {
+    if (m.logo) {
+      return '<img src="'+m.logo+'" alt="'+name+'" '+
+        'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
+        '<span class="plogo-letter" style="display:none;--pcolor1:'+m.c1+';--pcolor2:'+m.c2+'">'+m.abbr+'</span>';
+    }
+    return '<span class="plogo-letter" style="--pcolor1:'+m.c1+';--pcolor2:'+m.c2+'">'+m.abbr+'</span>';
+  }
+
+  // ── BUILD TAG HTML ──────────────────────────────────────────────
+  function tagsHtml(tags, color) {
+    return tags.map(t =>
+      '<span style="background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.08);'+
+      'color:'+color+';padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600">'+t+'</span>'
+    ).join(' ');
+  }
+
+  // ── RENDER PROVIDERS ────────────────────────────────────────────
+  function renderProviders(providers) {
+    const grid = document.getElementById('pgrid');
+    grid.innerHTML = '';
+    const entries = Object.entries(providers);
+
+    if (!entries.length) {
+      grid.innerHTML = '<div style="color:var(--muted);padding:24px 0">Aucun provider trouvé.</div>';
+      return;
+    }
+
+    let active = 0;
+    for (const [name, info] of entries) {
+      const on = info.enabled !== false;
+      const pending = !!info.pending;
+      if (on && !pending) active++;
+
+      const m = PM[name] || {
+        name: name.charAt(0).toUpperCase()+name.slice(1),
+        logo: null, abbr: name.slice(0,2).toUpperCase(),
+        c1:'#334155',c2:'#1e293b',glow:'51,65,85',
+        color:'#94a3b8',
+        desc:'Provider externe',
+        tags:[]
+      };
+
+      const stateClass = pending ? 'pending' : on ? 'on' : 'off';
+      const statusBadge = pending
+        ? '<span class="pstatus pending"><span class="dot"></span>En attente de redéploiement</span>'
+        : on
+          ? '<span class="pstatus on"><span class="dot"></span>Actif</span>'
+          : '<span class="pstatus off"><span class="dot"></span>Désactivé</span>';
+
+      const card = document.createElement('div');
+      card.id = 'card-' + name;
+      card.className = 'pcard ' + stateClass;
+      card.style.cssText = '--pcolor:'+m.color+';--pglow:'+m.glow;
+      card.innerHTML =
+        '<div class="plogo-wrap">'+logoHtml(name, m)+'</div>'+
+        '<div class="pinfo">'+
+          '<div class="pname">'+m.name+
+            '<span style="display:flex;gap:4px;align-items:center">'+tagsHtml(m.tags, m.color)+'</span>'+
+          '</div>'+
+          '<div class="pdesc">'+m.desc+'</div>'+
+          statusBadge+
+        '</div>'+
+        '<div class="pactions">'+
+          '<button class="btn-upd" onclick="openTestPanel(\''+name+'\')" title="Tester ce provider" style="color:var(--green);border-color:rgba(34,211,165,.3)">'+
+            '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>'+
+            '<span> Tester</span>'+
+          '</button>'+
+          '<button class="btn-upd" onclick="openModal(\''+name+'\')" title="Mettre à jour">'+
+            SVG.refresh+'<span> Mettre à jour</span>'+
+          '</button>'+
+          '<label class="toggle" title="'+(on?'Désactiver':'Activer')+'">'+
+            '<input type="checkbox" '+(on?'checked':'')+' onchange="doToggle(\''+name+'\',this)">'+
+            '<span class="tslider" style="--pcolor:'+m.color+'"></span>'+
+          '</label>'+
+        '</div>';
+      grid.appendChild(card);
+    }
+
+    document.getElementById('s-on').textContent = active;
+    document.getElementById('s-total').textContent = entries.length;
+  }
+
+  // ── LOAD ────────────────────────────────────────────────────────
+  const FALLBACK_PROVIDERS = {
+      frenchstream: { enabled: true, pending: false },
+      movix: { enabled: true, pending: false },
+      nakastream: { enabled: false, pending: false },
+      nakios: { enabled: true, pending: false },
+      purstream: { enabled: true, pending: true },
+      toflix: { enabled: false, pending: false },
+      vstream: { enabled: false, pending: false }
+    };
+
+    async function load() {
+      let providers = FALLBACK_PROVIDERS;
+      let live = false;
+      try {
+        const res = await fetch('/api/dashboard/status');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.providers) {
+            providers = data.providers;
+            live = true;
+          }
+        }
+      } catch (e) {}
+
+      renderProviders(providers);
+
+      const total = Object.keys(providers || {}).length;
+      const active = Object.values(providers || {}).filter(p => p.enabled !== false && !p.pending).length;
+      const pill = document.getElementById('hpill');
+      document.getElementById('hpill-txt').textContent = active + '/' + total + ' actif' + (active > 1 ? 's' : '') + (live ? '' : ' (mode local)');
+      pill.className = 'hpill ' + (active > 0 ? 'ok' : 'err');
+    }
+
+    // ── TOGGLE ──────────────────────────────────────────────────────
+  async function doToggle(name, cb) {
+    cb.disabled = true;
+    try {
+      const res  = await fetch('/api/dashboard/toggle/' + name, {
+        method:'POST', headers:{'Content-Type':'application/json'}
+      });
+      const data = await res.json();
+      const on   = !!data.enabled;
+      const card = document.getElementById('card-' + name);
+      if (card) {
+        const m = PM[name] || {};
+        card.className = 'pcard ' + (on ? 'on' : 'off');
+        card.style.cssText = '--pcolor:' + (m.color||'var(--accent)') + ';--pglow:' + (m.glow||'108,99,255');
+        const badge = card.querySelector('.pstatus');
+        if (badge) {
+          badge.className = 'pstatus ' + (on ? 'on' : 'off');
+          badge.innerHTML = '<span class="dot"></span>' + (on ? 'Actif' : 'Désactivé');
+        }
+      }
+      toast(data.enabled ? (name + ' activé ✓') : (name + ' désactivé'), data.enabled ? 'ok' : 'err');
+      setTimeout(load, 600);
+    } catch(e) {
+      toast('Erreur : ' + e.message, 'err');
+      cb.checked = !cb.checked;
+    }
+    cb.disabled = false;
+  }
+
+  // ── MODAL ───────────────────────────────────────────────────────
+  function openModal(name) {
+    currentTarget = name;
+    const m = PM[name] || {};
+    document.getElementById('modal-desc').textContent =
+      'URL du nouveau fichier .js pour remplacer "' + (m.name || name) + '".';
+    document.getElementById('modal-url').value = '';
+    document.getElementById('modal').classList.add('open');
+    setTimeout(() => document.getElementById('modal-url').focus(), 80);
+  }
+  function closeModal() {
+    document.getElementById('modal').classList.remove('open');
+    currentTarget = null;
+  }
+  async function doUpdate() {
+    const url = document.getElementById('modal-url').value.trim();
+    if (!url) { toast('URL requise', 'err'); return; }
+    const btn = document.getElementById('modal-btn');
+    btn.disabled = true;
+    btn.innerHTML = SVG.spin + ' En cours…';
+    try {
+      const res  = await fetch('/api/dashboard/provider/add', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ url, name: currentTarget })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur serveur');
+      toast(data.message || 'Provider mis à jour !');
+      closeModal();
+      setTimeout(load, 800);
+    } catch(e) { toast('Erreur : ' + e.message, 'err'); }
+    finally { btn.disabled = false; btn.innerHTML = SVG.refresh + ' Mettre à jour'; }
+  }
+
+  // ── ADD PROVIDER ─────────────────────────────────────────────────
+  async function addProvider() {
+    const url  = document.getElementById('add-url').value.trim();
+    const name = document.getElementById('add-name').value.trim();
+    if (!url) { toast('URL requise', 'err'); return; }
+    const btn = document.getElementById('add-btn');
+    btn.disabled = true;
+    btn.innerHTML = SVG.spin + ' Ajout…';
+    try {
+      const res  = await fetch('/api/dashboard/provider/add', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ url, name })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur serveur');
+      toast(data.message || 'Provider ajouté !');
+      document.getElementById('add-url').value = '';
+      document.getElementById('add-name').value = '';
+      setTimeout(load, 800);
+    } catch(e) { toast('Erreur : ' + e.message, 'err'); }
+    finally { btn.disabled = false; btn.innerHTML = SVG.plus + ' Ajouter'; }
+  }
+
+  load();
+
+  // ── TEST PANEL ───────────────────────────────────────────────────
+  let _testProvider = null;
+  let _testMode = 'movie';
+
+  function openTestPanel(name) {
+    _testProvider = name;
+    const m = PM[name] || { name: name.charAt(0).toUpperCase() + name.slice(1) };
+    document.getElementById('test-panel-title').textContent = 'Tester : ' + m.name;
+    document.getElementById('test-panel-sub').textContent = 'Recherche réelle sur le serveur — résultats en temps réel';
+    document.getElementById('test-body').innerHTML =
+      '<div class="test-empty">Sélectionnez le mode et cliquez sur <strong>Lancer le test</strong>.<br>Le serveur fera une vraie recherche et affichera les liens trouvés.</div>';
+    setTestMode('movie');
+    document.getElementById('test-overlay').classList.add('open');
+  }
+
+  function closeTestPanel() {
+    document.getElementById('test-overlay').classList.remove('open');
+    _testProvider = null;
+  }
+
+  function setTestMode(mode) {
+    _testMode = mode;
+    document.getElementById('btn-mode-movie').classList.toggle('active', mode === 'movie');
+    document.getElementById('btn-mode-tv').classList.toggle('active', mode === 'tv');
+    document.getElementById('test-ep-inputs').style.display = mode === 'tv' ? 'flex' : 'none';
+  }
+
+  function qualityBadge(q) {
+    if (!q) return '';
+    const l = (q || '').toLowerCase();
+    let cls = 'qhd';
+    if (l.includes('4k') || l.includes('2160')) cls = 'q4k';
+    else if (l.includes('1080')) cls = 'q1080';
+    else if (l.includes('720')) cls = 'q720';
+    return '<span class="stream-badge ' + cls + '">' + q + '</span>';
+  }
+
+  function langBadge(name, url) {
+    const n = (name || '').toUpperCase();
+    const u = (url || '').toLowerCase();
+    let lang = 'VF';
+    if (n.includes('MULTI')) lang = 'MULTI';
+    else if (n.includes('VOSTFR') || n.includes('VOST')) lang = 'VOSTFR';
+    else if (n.includes('PREMIUM') || u.includes('premium')) lang = 'MULTI';
+    return '<span class="stream-badge lang">' + lang + '</span>';
+  }
+
+  function fmtBadge(url) {
+    const fmt = url && url.match(/\.mp4/i) ? 'MP4' : 'M3U8';
+    return '<span class="stream-badge fmt">' + fmt + '</span>';
+  }
+
+  function qualityFromStream(s) {
+    const q = (s.quality || '').toUpperCase();
+    const n = (s.name || '').toUpperCase();
+    if (q) return q;
+    if (n.includes('4K') || n.includes('2160')) return '4K';
+    if (n.includes('1080')) return '1080p';
+    if (n.includes('720')) return '720p';
+    if ((s.url || '').includes('premium')) return '1080p';
+    if ((s.url || '').includes('free')) return '720p';
+    return 'HD';
+  }
+
+  async function runTest() {
+    if (!_testProvider) return;
+    const btn = document.getElementById('btn-run-test');
+    const body = document.getElementById('test-body');
+    const season  = parseInt(document.getElementById('test-season').value)  || 1;
+    const episode = parseInt(document.getElementById('test-episode').value) || 1;
+
+    btn.disabled = true;
+    btn.innerHTML = SVG.spin + ' Recherche en cours…';
+    body.innerHTML = '<div class="test-empty"><span class="spin" style="display:inline-block;margin-right:8px">⟳</span>Interrogation du provider sur le serveur…<br><small style="color:var(--muted2)">Peut prendre jusqu\'à 20 secondes</small></div>';
+
+    const qs = _testMode === 'tv' ? '?mode=tv&season=' + season + '&episode=' + episode : '?mode=movie';
+    const url = '/api/dashboard/test/' + _testProvider + qs;
+
+    try {
+      const res  = await fetch(url, { signal: AbortSignal.timeout(25000) });
+      const data = await res.json();
+
+      if (data.error && (!data.streams || data.streams.length === 0)) {
+        body.innerHTML = '<div class="test-error"><strong>Erreur :</strong> ' + data.error + '</div>';
+        return;
+      }
+
+      const streams = data.streams || [];
+      const elapsed = data.elapsed ? (data.elapsed / 1000).toFixed(2) + 's' : '—';
+      const countClass = streams.length > 0 ? 'ok' : 'err';
+
+      let html = '<div class="test-result-meta">';
+      html += '<span class="trm-label">Recherche</span><span class="trm-val">' + (data.test || '—') + '</span>';
+      html += '<span class="trm-label" style="margin-left:8px">Durée</span><span class="trm-val">' + elapsed + '</span>';
+      html += '<span class="trm-label" style="margin-left:8px">Sources trouvées</span><span class="trm-val ' + countClass + '">' + streams.length + '</span>';
+      html += '</div>';
+
+      if (streams.length === 0) {
+        html += '<div class="test-empty" style="padding:24px 0">Aucun flux trouvé.<br><small style="color:var(--muted2)">Le provider ne retourne pas de résultat pour ce test.</small></div>';
+      } else {
+        html += '<div class="stream-list">';
+        streams.forEach(function(s, i) {
+          const q = qualityFromStream(s);
+          html += '<div class="stream-item">';
+          html += '<div class="stream-top">';
+          html += '<span class="stream-name">#' + (i + 1) + ' ' + (s.name || 'Stream') + '</span>';
+          html += qualityBadge(q);
+          html += langBadge(s.name, s.url);
+          if (s.url) html += fmtBadge(s.url);
+          html += '</div>';
+          if (s.url) {
+            html += '<div class="stream-url"><a href="' + s.url + '" target="_blank" rel="noopener">' + s.url + '</a></div>';
+          }
+          html += '</div>';
+        });
+        html += '</div>';
+      }
+
+      body.innerHTML = html;
+    } catch (e) {
+      body.innerHTML = '<div class="test-error"><strong>Erreur réseau :</strong> ' + e.message + '</div>';
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> Relancer';
+    }
+  }
+
+  // Fermer le panel avec Échap
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') { closeTestPanel(); closeModal(); }
+  });
+  </script>
+  </body>
+  </html>

@@ -1,0 +1,60 @@
+/**
+ * HTTP Utilities for Frenchstream
+ */
+
+import { safeFetch, createProviderRateLimiter, isAborted } from '../utils/resolvers.js';
+
+const rateLimit = createProviderRateLimiter();
+
+let _currentSignal = null;
+export function setCurrentSignal(signal) { _currentSignal = signal; }
+
+const DOMAIN = 'french-stream.one';
+
+export const BASE_URLS = ['https://french-stream.one'];
+export const BASE_URL = BASE_URLS[0];
+export const GLOBAL_TIMEOUT_MS = 20000;
+
+export const HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Referer': `${BASE_URL}/`,
+    'Origin': BASE_URL,
+    'Connection': 'keep-alive'
+};
+
+export async function fetchText(url, options = {}) {
+    const signal = options.signal || _currentSignal;
+    if (isAborted(signal)) throw new Error('AbortError: Request aborted');
+
+    await rateLimit(DOMAIN);
+    console.log(`[Frenchstream] Fetching: ${url}`);
+    const base = options.baseUrl || (() => { try { return new URL(url).origin; } catch (e) { return BASE_URL; } })();
+    const timeout = options.timeout || GLOBAL_TIMEOUT_MS;
+    const mergedHeaders = {
+        ...HEADERS,
+        Referer: `${base}/`,
+        Origin: base,
+        ...(options.headers || {})
+    };
+
+    const { baseUrl, headers, ...restOptions } = options;
+    const res = await safeFetch(url, { headers: mergedHeaders, ...restOptions, timeout, signal });
+    if (!res || !res.ok) {
+        const status = res && typeof res.status === 'number' ? res.status : 'no-response';
+        throw new Error(`HTTP error ${status} for ${url}`);
+    }
+
+    return await res.text();
+}
+
+export async function fetchJson(url, options = {}) {
+    const text = await fetchText(url, options);
+    try {
+        return JSON.parse(text);
+    } catch (e) {
+        console.error(`[Frenchstream] Failed to parse JSON for ${url}`);
+        throw e;
+    }
+}

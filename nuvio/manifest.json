@@ -1,0 +1,15 @@
+{
+  "id": "com.snixi92.french-providers",
+  "version": "1.2.0",
+  "name": "French Streaming Providers",
+  "description": "Nakios, Purstream, Movix, ToFlix, Frenchstream, Nakastream, Vstream — VF · VOSTFR · MULTI",
+  "logo": "https://i.postimg.cc/nLwY1pJB/nakios.png",
+  "resources": ["stream"],
+  "types": ["movie", "series"],
+  "idPrefixes": ["tt", "tmdb:"],
+  "catalogs": [],
+  "behaviorHints": {
+    "configurable": false,
+    "newEpisodeNotifications": false
+  }
+}
