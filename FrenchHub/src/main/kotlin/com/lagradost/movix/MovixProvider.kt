@@ -475,7 +475,7 @@ class MovixProvider : MainAPI() {
         // Tous les providers sont sondés en parallèle pour que chaque source
         // ait le temps de répondre : aucun provider lent ne bloque les autres.
         coroutineScope {
-            launch { runCatching { loadExtractorLinks(frembedLinks, subtitleCallback, callback) } }
+            launch { runCatching { loadExtractorLinks(frembedLinks, subtitleCallback, callback, "Frembed") } }
             launch {
                 runCatching {
                     purstreamLinks(id, season, episode).forEach { link ->
@@ -483,8 +483,8 @@ class MovixProvider : MainAPI() {
                     }
                 }
             }
-            launch { runCatching { loadExtractorLinks(primaryLinks, subtitleCallback, callback) } }
-            launch { runCatching { loadExtractorLinks(fallbackLinks, subtitleCallback, callback) } }
+            launch { runCatching { loadExtractorLinks(primaryLinks, subtitleCallback, callback, "FStream") } }
+            launch { runCatching { loadExtractorLinks(fallbackLinks, subtitleCallback, callback, "Wiflix") } }
         }
 
         return true
@@ -510,19 +510,38 @@ class MovixProvider : MainAPI() {
         } else {
             ExtractorLinkType.VIDEO
         }
-        return newExtractorLink(
-            "Purstream ${source.name}",
-            "Purstream ${source.name}",
-            source.url,
-            type,
-        ) {
+        val language = languageFromName(source.name)
+        val linkName = "Purstream$language ${source.name}"
+        return newExtractorLink(linkName, linkName, source.url, type) {
             this.referer = "https://movix.show/"
             this.headers = mapOf(
                 "Referer" to "https://movix.show/",
                 "Origin" to "https://movix.show",
                 "User-Agent" to "Mozilla/5.0",
             )
-            this.quality = Qualities.Unknown.value
+            this.quality = qualityFromName(source.name)
+        }
+    }
+
+    private fun qualityFromName(name: String): Int {
+        val upper = name.uppercase(Locale.getDefault())
+        return when {
+            "2160" in upper || "4K" in upper -> Qualities.P2160.value
+            "1080" in upper || "FHD" in upper -> Qualities.P1080.value
+            "720" in upper || "HD" in upper -> Qualities.P720.value
+            "480" in upper -> Qualities.P480.value
+            else -> Qualities.Unknown.value
+        }
+    }
+
+    private fun languageFromName(name: String): String {
+        val upper = name.uppercase(Locale.getDefault())
+        return when {
+            "MULTI" in upper -> " [Multi]"
+            "VFF" in upper -> " [VF]"
+            "VOSTFR" in upper -> " [VOSTFR]"
+            "VOENG" in upper -> " [VO]"
+            else -> ""
         }
     }
 
@@ -550,11 +569,29 @@ class MovixProvider : MainAPI() {
     private suspend fun loadExtractorLinks(
         links: List<String>,
         subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
+        callback: (ExtractorLink) -> Unit,
+        label: String = ""
     ): Boolean {
         return MovixExtractorPipeline.load(
             links = links.filterNot(::isFakeLink),
-            loader = { link, emit -> loadExtractor(link, subtitleCallback, emit) },
+            loader = { link, emit ->
+                loadExtractor(link, subtitleCallback) { emitted ->
+                    val newName = label.takeIf { it.isNotBlank() }
+                        ?.let { "${emitted.name} [$it]" } ?: emitted.name
+                    @Suppress("DEPRECATION_ERROR")
+                    emit(
+                        ExtractorLink(
+                            source = emitted.source,
+                            name = newName,
+                            url = emitted.url,
+                            referer = emitted.referer,
+                            quality = emitted.quality,
+                            headers = emitted.headers,
+                            type = emitted.type
+                        )
+                    )
+                }
+            },
             callback = callback
         )
     }

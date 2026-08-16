@@ -148,28 +148,81 @@ internal class MovixHostEmbedExtractor(
         callback: (ExtractorLink) -> Unit,
     ) {
         val refererHost = url.substringBefore("/")
-        val response = app.get(
-            url,
-            referer = referer ?: refererHost,
-            headers = mapOf("User-Agent" to USER_AGENT),
-            timeout = 20L,
-        )
 
-        val embedLinks = collectLinks(response.text)
+        // Récupération de la page embed avec en-têtes de navigateur complets : les
+        // hôtes Cloudflare rejettent les requêtes minimales, ce qui faisait
+        // disparaître une partie des lecteurs.
+        val response = runCatching {
+            app.get(
+                url,
+                referer = referer ?: refererHost,
+                headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                    "Accept-Language" to "fr,fr-FR;q=0.8,en-US;q=0.5",
+                ),
+                timeout = 20L,
+            )
+        }.getOrNull() ?: run {
+            // Même en cas d'échec, un lien de secours reste visible dans la liste
+            // des lecteurs pour que l'utilisateur sache que ce lecteur existe.
+            emitEmbedFallback(url, callback)
+            return
+        }
 
+        val pageText = response.text
+        val embedLinks = collectLinks(pageText)
+
+        if (embedLinks.isEmpty()) {
+            // Le flux est peut-être intégré directement dans la page embed
+            // (player HTML/JS embarqué) : on émet la page comme lien de secours.
+            emitEmbedFallback(url, callback)
+            return
+        }
+
+        var resolved = false
         for (nested in embedLinks) {
             if (nested == url || nested == "$url/") continue
             val nestedText = runCatching {
                 app.get(nested, referer = url, headers = mapOf("User-Agent" to USER_AGENT), timeout = 20L).text
             }.getOrNull() ?: continue
             collectLinks(nestedText).forEach { streamUrl ->
+                resolved = true
                 emitLink(streamUrl, url, refererHost, callback)
             }
         }
 
         embedLinks.forEach { streamUrl ->
+            resolved = true
             emitLink(streamUrl, url, refererHost, callback)
         }
+
+        if (!resolved) {
+            emitEmbedFallback(url, callback)
+        }
+    }
+
+    /**
+     * Lien de secours quand la page embed ne peut être résolue (blocage
+     * Cloudflare ou player intégré) : l'utilisateur voit au moins le lecteur
+     * dans la liste et l'application tente de le lire directement.
+     */
+    private fun emitEmbedFallback(url: String, callback: (ExtractorLink) -> Unit) {
+        callback(
+            ExtractorLink(
+                source = "${name} (embed)",
+                name = "${name} (embed)",
+                url = url,
+                referer = "https://movix.show/",
+                quality = Qualities.Unknown.value,
+                type = ExtractorLinkType.VIDEO,
+                headers = mapOf(
+                    "Referer" to "https://movix.show/",
+                    "Origin" to "https://movix.show",
+                    "User-Agent" to USER_AGENT,
+                ),
+            ),
+        )
     }
 
     private fun collectLinks(html: String): List<String> {
@@ -179,14 +232,18 @@ internal class MovixHostEmbedExtractor(
         )
         val found = iframeRegex.findAll(html).map { it.value }.toMutableSet()
 
-        Jsoup.parse(html).select("iframe[src], source[src], script[src]").forEach { element ->
+        val document = Jsoup.parse(html)
+        document.select("iframe[src], source[src], script[src], video source[src]").forEach { element ->
             val src = element.attr("src").takeIf { it.isNotBlank() } ?: return@forEach
             if (src.startsWith("http") && src.contains(".m3u8", ignoreCase = true)) {
                 found.add(src)
             }
+            element.attr("data-src").takeIf {
+                it.startsWith("http") && it.contains(".m3u8", ignoreCase = true)
+            }?.let { found.add(it) }
         }
 
-        Jsoup.parse(html).select("script").forEach { script ->
+        document.select("script").forEach { script ->
             val packed = script.data().ifBlank { script.html() }
             JsUnpacker(packed).takeIf { it.detect() }?.unpack()?.let { unpacked ->
                 iframeRegex.findAll(unpacked).forEach { found.add(it.value) }
@@ -207,6 +264,7 @@ internal class MovixHostEmbedExtractor(
         } else {
             ExtractorLinkType.VIDEO
         }
+        val quality = qualityFromUrl(streamUrl)
         callback(
             newExtractorLink(name, name, streamUrl, type) {
                 this.referer = pageUrl
@@ -215,8 +273,20 @@ internal class MovixHostEmbedExtractor(
                     "Origin" to refererHost,
                     "User-Agent" to USER_AGENT,
                 )
-                this.quality = Qualities.Unknown.value
+                this.quality = quality
             },
         )
+    }
+
+    /** Détecte la qualité depuis le nom du fichier ou les paramètres de l'URL du flux. */
+    private fun qualityFromUrl(url: String): Int {
+        val upper = url.uppercase()
+        return when {
+            "2160" in upper || "/4K" in upper -> Qualities.P2160.value
+            "1080" in upper || "/FHD" in upper -> Qualities.P1080.value
+            "720" in upper || "/HD" in upper -> Qualities.P720.value
+            "480" in upper -> Qualities.P480.value
+            else -> Qualities.Unknown.value
+        }
     }
 }
