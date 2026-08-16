@@ -6,10 +6,14 @@ import com.lagradost.cloudstream3.LoadResponse.Companion.addImdbId
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTMDbId
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
@@ -44,7 +48,7 @@ class MovixProvider : MainAPI() {
     private val movixHeaders = mapOf(
         "Origin" to "https://movix.show",
         "Referer" to "https://movix.show/",
-        "User-Agent" to "Mozilla/5.0"
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     )
     private data class QualityCacheEntry(val quality: SearchQuality?, val expiresAt: Long)
     private val qualityCache = ConcurrentHashMap<Int, QualityCacheEntry>()
@@ -451,7 +455,6 @@ class MovixProvider : MainAPI() {
         } else {
             emptyList()
         }
-        var found = loadExtractorLinks(frembedLinks, subtitleCallback, callback)
 
         val primaryLinks = if (type == "tv" && season != null && episode != null) {
             fstreamTvLinks(id, season, episode)
@@ -460,7 +463,6 @@ class MovixProvider : MainAPI() {
         } else {
             emptyList()
         }
-        found = loadExtractorLinks(primaryLinks, subtitleCallback, callback) || found
 
         val fallbackLinks = if (type == "tv" && season != null && episode != null) {
             wiflixTvLinks(id, season, episode) + imdbTvLinks(id, season, episode)
@@ -469,9 +471,81 @@ class MovixProvider : MainAPI() {
         } else {
             emptyList()
         }
-        found = loadExtractorLinks(fallbackLinks, subtitleCallback, callback) || found
-        return found
+
+        // Tous les providers sont sondés en parallèle pour que chaque source
+        // ait le temps de répondre : aucun provider lent ne bloque les autres.
+        coroutineScope {
+            launch { runCatching { loadExtractorLinks(frembedLinks, subtitleCallback, callback) } }
+            launch {
+                runCatching {
+                    purstreamLinks(id, season, episode).forEach { link ->
+                        callback(link)
+                    }
+                }
+            }
+            launch { runCatching { loadExtractorLinks(primaryLinks, subtitleCallback, callback) } }
+            launch { runCatching { loadExtractorLinks(fallbackLinks, subtitleCallback, callback) } }
+        }
+
+        return true
     }
+
+    private val purstreamCache = ConcurrentHashMap<String, List<ExtractorLink>>()
+
+    private suspend fun purstreamLinks(id: Int, season: Int?, episode: Int?): List<ExtractorLink> {
+        val cacheKey = if (season != null && episode != null) "$id/$season/$episode" else "$id"
+        purstreamCache.getOrPut(cacheKey) {
+            purstreamSources(id, season, episode).let { sources ->
+                coroutineScope {
+                    sources.map { async { toPurstreamLink(it) } }.awaitAll()
+                }
+            }
+        }
+        return purstreamCache.getValue(cacheKey)
+    }
+
+    private suspend fun toPurstreamLink(source: PurstreamSource): ExtractorLink {
+        val type = if (source.url.contains(".m3u8", ignoreCase = true)) {
+            ExtractorLinkType.M3U8
+        } else {
+            ExtractorLinkType.VIDEO
+        }
+        return newExtractorLink(
+            "Purstream ${source.name}",
+            "Purstream ${source.name}",
+            source.url,
+            type,
+        ) {
+            this.referer = "https://movix.show/"
+            this.headers = mapOf(
+                "Referer" to "https://movix.show/",
+                "Origin" to "https://movix.show",
+                "User-Agent" to "Mozilla/5.0",
+            )
+            this.quality = Qualities.Unknown.value
+        }
+    }
+
+    private data class PurstreamSource(val url: String, val name: String)
+
+    private suspend fun purstreamSources(id: Int, season: Int?, episode: Int?): List<PurstreamSource> {
+        val path = if (typeIsTv(season, episode)) {
+            "api/purstream/tv/$id/stream?season=${season ?: 1}&episode=${episode ?: 1}"
+        } else {
+            "api/purstream/movie/$id/stream"
+        }
+        return getMovixApi(path)
+            ?.optJSONArray("sources")
+            ?.toJsonObjects()
+            ?.mapNotNull { source ->
+                val url = source.optString("url")
+                val name = source.optString("name").ifBlank { "Purstream" }
+                url.takeIf { it.isNotBlank() }?.let { PurstreamSource(it, name) }
+            }
+            ?: emptyList()
+    }
+
+    private fun typeIsTv(season: Int?, episode: Int?): Boolean = season != null && episode != null
 
     private suspend fun loadExtractorLinks(
         links: List<String>,
@@ -485,7 +559,7 @@ class MovixProvider : MainAPI() {
         )
     }
 
-    private suspend fun getMovixApi(path: String, timeoutSeconds: Long = 15L): JSONObject? {
+    private suspend fun getMovixApi(path: String, timeoutSeconds: Long = 20L): JSONObject? {
         return runCatching {
             for (apiBase in apiMirrors) {
                 val response = runCatching {
