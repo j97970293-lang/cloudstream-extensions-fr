@@ -40,11 +40,12 @@ import com.lagradost.frenchhub.wiflix.WiflixProvider
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Collections
-import java.util.LinkedHashMap
 import java.util.Locale
 
 internal data class FrenchHubMediaData(
@@ -249,35 +250,41 @@ class FrenchHubCatalog : MainAPI() {
         // liens finaux (vidzy, uqload, …). Il faut conserver UN lecteur par
         // (provider, URL) et non par URL seule, sinon le premier provider à émettre
         // masque tous les lecteurs des autres sources.
-        val links = Collections.synchronizedMap(LinkedHashMap<String, ExtractorLink>())
-        val subtitles = Collections.synchronizedMap(LinkedHashMap<String, SubtitleFile>())
+        val seenLinks = Collections.synchronizedSet(mutableSetOf<String>())
+        val seenSubtitles = Collections.synchronizedSet(mutableSetOf<String>())
         val active = providers.filter { FrenchHubSettings.isEnabled(it.key) }
 
-        val results = coroutineScope {
-            active.mapNotNull { entry ->
-                async {
-                    withTimeoutOrNull(30_000L) {
-                        runCatching {
-                            val providerData = directProviderData(entry, media)
-                                ?: searchProviderData(entry, media)
-                                ?: return@runCatching false
+        // Chargement non bloquant : chaque provider tourne en parallèle et émet
+        // ses lecteurs et sous-titres AUSSI TÔT qu'ils sont disponibles.
+        // CloudStream rafraîchit la liste des lecteurs en temps réel dès que le
+        // callback est appelé — comme le font CineStream ou StreamPlay.
+        supervisorScope {
+            active.forEach { entry ->
+                launch {
+                    runCatching {
+                        val providerData = directProviderData(entry, media)
+                            ?: searchProviderData(entry, media)
+                            ?: return@launch
+                        withTimeoutOrNull(30_000L) {
                             entry.api.loadLinks(
                                 providerData,
                                 isCasting,
-                                { subtitle -> subtitles.putIfAbsent(subtitle.url, subtitle) },
+                                { subtitle ->
+                                    if (seenSubtitles.add(subtitle.url)) subtitleCallback(subtitle)
+                                },
                                 { link ->
-                                    links.putIfAbsent("${entry.key}|${link.url}", link)
+                                    if (seenLinks.add("${entry.key}|${link.url}")) callback(link)
                                 },
                             )
-                        }.getOrDefault(false)
-                    } ?: false
+                        }
+                    }
                 }
-            }.awaitAll()
+            }
         }
-
-        synchronized(subtitles) { subtitles.values.toList() }.forEach(subtitleCallback)
-        synchronized(links) { links.values.toList() }.forEach(callback)
-        return results.any { it } && links.isNotEmpty()
+        // loadLinks retourne true pour garder la fiche ouverte et laisser les
+        // lecteurs arriver au fur et à mesure ; le retour exact n'est plus
+        // bloquant (CloudStream gère l'arrêt quand la coroutine parente se termine).
+        return true
     }
 
     private fun directProviderData(entry: Entry, media: FrenchHubMediaData): String? {
