@@ -32,7 +32,8 @@ class FrenchStreamProvider : MainAPI() {
     private val mirrors = listOf(
         "https://french-stream.one",
         "https://french-stream.pink",
-        "https://fstream.info"
+        "https://fstream.info",
+        "https://french-stream.re"
     )
     override var name = "French-Stream"
     override val hasMainPage = true
@@ -530,8 +531,12 @@ class FrenchStreamProvider : MainAPI() {
             throw ErrorLoadingException("French-Stream est indisponible (HTTP ${response.code})")
         }
         val doc = response.document
-        val siteTitle = doc.selectFirst("h1#s-title")?.text()?.trim()
-            ?: doc.selectFirst("h1")?.text()?.trim()
+        // Le site charge désormais h1#s-title en JavaScript : le HTML brut ne contient plus son texte.
+        // Fallback : meta og:title, balise title, puis l'attribut data-title de la fiche.
+        val siteTitle = doc.selectFirst("h1#s-title")?.text()?.trim()?.takeIf { it.isNotBlank() }
+            ?: doc.selectFirst("h1")?.text()?.trim()?.takeIf { it.isNotBlank() }
+            ?: doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()?.takeIf { it.isNotBlank() }
+            ?: doc.selectFirst("title")?.text()?.trim()?.substringBefore(" en streaming")?.takeIf { it.isNotBlank() }
             ?: throw ErrorLoadingException("Fiche French-Stream introuvable")
         val canonicalTitle = FrenchStreamMetadata.normalizeTitle(siteTitle)
 
@@ -556,6 +561,7 @@ class FrenchStreamProvider : MainAPI() {
         val isSeries = siteTitle.contains("saison", ignoreCase = true)
             || doc.select("div.episodes-wrapper").isNotEmpty()
             || doc.select("#serie-config, #sv-cfg").isNotEmpty()
+            || doc.select("[data-type=serie], [data-type=series]").isNotEmpty()
         val details = FrenchStreamTmdbClient.details(canonicalTitle, siteYear, isSeries)
         val tmdbTags = details?.optJSONArray("genres")?.let { genres ->
             (0 until genres.length()).mapNotNull { genres.optJSONObject(it)?.optString("name")?.takeIf(String::isNotBlank) }

@@ -19,7 +19,8 @@ internal object FrenchHubSettings {
         ProviderSpec("frenchanime", "French Anime"),
         ProviderSpec("fsmirror", "FS Mirror"),
         ProviderSpec("jourfilm", "JourFilm"),
-        ProviderSpec("dotriv", "DoTriv")
+        ProviderSpec("dotriv", "DoTriv"),
+        ProviderSpec("animesama", "Anime Sama"),
     )
 
     fun isEnabled(key: String): Boolean = getKey<Boolean>(PREFIX + key) ?: true

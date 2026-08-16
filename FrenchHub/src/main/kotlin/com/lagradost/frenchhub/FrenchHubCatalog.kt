@@ -28,6 +28,7 @@ import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.frenchhub.dotriv.DoTriv
+import com.lagradost.frenchhub.animesama.AnimeSamaProvider
 import com.lagradost.frenchhub.frenchanime.FrenchAnime
 import com.lagradost.frenchhub.frenchmanga.FrenchMangaProvider
 import com.lagradost.frenchhub.frenchstream.FrenchStreamProvider
@@ -70,6 +71,7 @@ class FrenchHubCatalog : MainAPI() {
         Entry("fsmirror", "FS Mirror", FsMirrorLol()),
         Entry("jourfilm", "JourFilm", JourFilm()),
         Entry("dotriv", "DoTriv", DoTriv()),
+        Entry("animesama", "Anime Sama", AnimeSamaProvider()),
     )
 
     private val providerByKey = providers.associateBy { it.key }
