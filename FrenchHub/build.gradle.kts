@@ -1,3 +1,5 @@
+version = 1
+
 plugins {
     id("com.android.library")
     kotlin("android")
@@ -8,7 +10,7 @@ cloudstream {
     description = "Catalogue français fédéré avec lecteurs multi-providers configurables."
     authors = listOf("j97970293-lang")
     status = 1
-    tvTypes = listOf("Movie", "TvSeries", "Anime", "Cartoon", "Documentary")
+    tvTypes = listOf("Movie", "TvSeries", "Anime", "Cartoon", "Documentary", "Live")
     iconUrl = "https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/master/docs/frenchhub.png"
 }
 
