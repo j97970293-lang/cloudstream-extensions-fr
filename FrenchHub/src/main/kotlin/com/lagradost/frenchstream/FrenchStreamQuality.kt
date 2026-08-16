@@ -20,10 +20,17 @@ internal object FrenchStreamQuality {
     }
 
     fun isPlayableMediaUrl(url: String): Boolean {
+        // Un lien est jouable s'il pointe directement vers un média ou un
+        // manifest HLS (m3u8, mp4, …) hébergé sur un CDN vidéo. Le segment
+        // « /troll/ » de fsvid.lol est un manifest HLS valide (HTTP 200) :
+        // il ne faut plus le rejeter, sinon le lecteur principal
+        // French-Stream (vidzy → fsvid.lol) disparaît de la liste.
+        val isMedia = Regex("""\.(?:m3u8|mp4|mkv|ts|webm)(?:\?|&|$)""", RegexOption.IGNORE_CASE)
+            .containsMatchIn(url)
+        if (!isMedia) return false
         val uri = runCatching { java.net.URI(url) }.getOrNull() ?: return false
         val host = uri.host.orEmpty().lowercase()
-        val path = uri.path.orEmpty().lowercase()
-        return host != "fstream.top" && !host.endsWith(".fstream.top") && "/troll/" !in path
+        return host != "fstream.top" && !host.endsWith(".fstream.top")
     }
 
     fun highestHlsQuality(manifest: String): Int? {

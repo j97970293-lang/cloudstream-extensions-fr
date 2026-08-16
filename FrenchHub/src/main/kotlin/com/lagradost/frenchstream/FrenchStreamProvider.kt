@@ -667,37 +667,42 @@ class FrenchStreamProvider : MainAPI() {
         } else if (data.contains("film_api.php") || data.contains("api.movix")) {
             val parts = data.split("|")
             var fetched = false
-            // Agrégateur Movix : expose les lecteurs French-Stream par langue
-            // (VFQ = VF, VFF = VF, VOSTFR = VOSTFR, VO = VO).
-            val movixUrl = parts.firstOrNull { it.contains("api.movix") }
-            if (movixUrl != null) {
-                val movixJson = runCatching {
-                    JSONObject(
-                        app.get(
-                            movixUrl,
-                            headers = mapOf(
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                                "Origin" to "https://movix.show",
-                                "Referer" to "https://movix.show/",
-                            ),
-                        ).text,
-                    )
-                }.getOrNull()
-                if (movixJson != null && movixJson.has("players")) {
+            // film_api.php : l'ID embarqué dans l'URL de la fiche est un newsid
+            // French-Stream (et non un ID TMDB). L'agrégateur Movix attend un ID
+            // TMDB et retourne alors HTTP 500 : interroger d'abord film_api.php,
+            // qui reste fonctionnel, et n'utiliser Movix qu'en dernier recours.
+            val legacyUrl = parts.firstOrNull { it.contains("film_api.php") }
+            if (legacyUrl != null) {
+                val legacyJson = fetchJson(legacyUrl)
+                if (legacyJson != null && legacyJson.has("players")) {
                     fetched = true
-                    FrenchStreamMetadata.movixMovieLinks(movixJson).forEach { (language, links) ->
+                    FrenchStreamMetadata.movieLinks(legacyJson).forEach { (language, links) ->
                         groupedLinks.getOrPut(language) { mutableListOf() }.addAll(links)
                     }
                 }
             }
-            // Ancien endpoint film_api.php (désormais souvent 404) : en dernier recours.
-            val legacyUrl = parts.firstOrNull { it.contains("film_api.php") }
-            if (legacyUrl != null) {
-                val legacyJson = fetchJson(legacyUrl)
-                if (legacyJson != null) {
-                    fetched = true
-                    FrenchStreamMetadata.movieLinks(legacyJson).forEach { (language, links) ->
-                        groupedLinks.getOrPut(language) { mutableListOf() }.addAll(links)
+            // Agrégateur Movix : expose les lecteurs French-Stream par langue
+            // (VFQ = VF, VFF = VF, VOSTFR = VOSTFR, VO = VO). Fallback seulement
+            // si film_api.php a échoué (l'ID newsid provoque un HTTP 500).
+            val movixUrl = parts.firstOrNull { it.contains("api.movix") }
+            if (movixUrl != null && !fetched) {
+                val response = runCatching {
+                    app.get(
+                        movixUrl,
+                        headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                            "Origin" to "https://movix.show",
+                            "Referer" to "https://movix.show/",
+                        ),
+                    )
+                }.getOrNull()
+                if (response != null && response.isSuccessful) {
+                    val movixJson = runCatching { JSONObject(response.text) }.getOrNull()
+                    if (movixJson != null && movixJson.has("players")) {
+                        fetched = true
+                        FrenchStreamMetadata.movixMovieLinks(movixJson).forEach { (language, links) ->
+                            groupedLinks.getOrPut(language) { mutableListOf() }.addAll(links)
+                        }
                     }
                 }
             }

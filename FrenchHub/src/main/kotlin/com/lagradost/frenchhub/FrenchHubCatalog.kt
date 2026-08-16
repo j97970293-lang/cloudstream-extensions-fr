@@ -256,7 +256,7 @@ class FrenchHubCatalog : MainAPI() {
         val results = coroutineScope {
             active.mapNotNull { entry ->
                 async {
-                    withTimeoutOrNull(18_000L) {
+                    withTimeoutOrNull(30_000L) {
                         runCatching {
                             val providerData = directProviderData(entry, media)
                                 ?: searchProviderData(entry, media)
