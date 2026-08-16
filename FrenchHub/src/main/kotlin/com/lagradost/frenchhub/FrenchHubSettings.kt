@@ -13,7 +13,6 @@ internal object FrenchHubSettings {
     val providers = listOf(
         ProviderSpec("frenchstream", "French-Stream"),
         ProviderSpec("movix", "Movix"),
-        ProviderSpec("fstv", "FSTV"),
         ProviderSpec("frenchmanga", "French-Manga"),
         ProviderSpec("wiflix", "Wiflix"),
         ProviderSpec("frembed", "Frembed"),

@@ -1,36 +1,38 @@
 package com.lagradost.frenchhub
 
 import com.lagradost.cloudstream3.AnimeLoadResponse
-import com.lagradost.cloudstream3.AnimeSearchResponse
+import com.lagradost.cloudstream3.DubStatus
 import com.lagradost.cloudstream3.Episode
 import com.lagradost.cloudstream3.ErrorLoadingException
 import com.lagradost.cloudstream3.HomePageResponse
-import com.lagradost.cloudstream3.LiveSearchResponse
 import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.MovieLoadResponse
-import com.lagradost.cloudstream3.MovieSearchResponse
 import com.lagradost.cloudstream3.SearchResponse
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvSeriesLoadResponse
-import com.lagradost.cloudstream3.TvSeriesSearchResponse
 import com.lagradost.cloudstream3.TvType
-import com.lagradost.cloudstream3.LiveStreamLoadResponse
-import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.addEpisodes
+import com.lagradost.cloudstream3.LoadResponse.Companion.addImdbId
+import com.lagradost.cloudstream3.LoadResponse.Companion.addTMDbId
 import com.lagradost.cloudstream3.mainPageOf
-import com.lagradost.cloudstream3.newAnimeSearchResponse
-import com.lagradost.cloudstream3.newHomePageResponse
-import com.lagradost.cloudstream3.newLiveSearchResponse
+import com.lagradost.cloudstream3.newAnimeLoadResponse
+import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.newMovieSearchResponse
+import com.lagradost.cloudstream3.newEpisode
+import com.lagradost.cloudstream3.newHomePageResponse
+import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.newTvSeriesSearchResponse
+import com.lagradost.cloudstream3.utils.AppUtils.toJson
+import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
+import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.frenchhub.dotriv.DoTriv
 import com.lagradost.frenchhub.frenchanime.FrenchAnime
 import com.lagradost.frenchhub.frenchmanga.FrenchMangaProvider
 import com.lagradost.frenchhub.frenchstream.FrenchStreamProvider
 import com.lagradost.frenchhub.frembed.Frembed
 import com.lagradost.frenchhub.fsmirror.FsMirrorLol
-import com.lagradost.frenchhub.fstv.FSTVProvider
 import com.lagradost.frenchhub.jourfilm.JourFilm
 import com.lagradost.frenchhub.movix.MovixProvider
 import com.lagradost.frenchhub.wiflix.WiflixProvider
@@ -38,280 +40,307 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeoutOrNull
-import java.net.URLDecoder
-import java.net.URLEncoder
+import org.json.JSONObject
+import java.text.SimpleDateFormat
 import java.util.Collections
 import java.util.LinkedHashMap
+import java.util.Locale
+
+internal data class FrenchHubMediaData(
+    val tmdbId: Int,
+    val type: String,
+    val title: String,
+    val imdbId: String? = null,
+    val year: Int? = null,
+    val season: Int? = null,
+    val episode: Int? = null,
+    val firstAired: String? = null,
+)
 
 class FrenchHubCatalog : MainAPI() {
     private data class Entry(val key: String, val label: String, val api: MainAPI)
-    private data class ProviderData(val key: String, val data: String)
-    private data class Route(
-        val kind: String,
-        val key: String,
-        val value: String? = null,
-        val title: String? = null,
-        val season: Int? = null,
-        val episode: Int? = null,
-        val bundle: List<ProviderData> = emptyList()
-    )
 
-    private val entries = listOf(
+    private val providers = listOf(
         Entry("frenchstream", "French-Stream", FrenchStreamProvider()),
         Entry("movix", "Movix", MovixProvider()),
-        Entry("fstv", "FSTV", FSTVProvider()),
         Entry("frenchmanga", "French-Manga", FrenchMangaProvider()),
         Entry("wiflix", "Wiflix", WiflixProvider()),
         Entry("frembed", "Frembed", Frembed()),
         Entry("frenchanime", "French Anime", FrenchAnime()),
         Entry("fsmirror", "FS Mirror", FsMirrorLol()),
         Entry("jourfilm", "JourFilm", JourFilm()),
-        Entry("dotriv", "DoTriv", DoTriv())
+        Entry("dotriv", "DoTriv", DoTriv()),
     )
 
-    companion object {
-        private const val ROUTE_BASE = "https://frenchhub.local"
-        private const val LEGACY_TITLE_PREFIX = "frenchhub://"
-        private const val LEGACY_DATA_PREFIX = "frenchhub-data://"
-    }
+    private val providerByKey = providers.associateBy { it.key }
+    private val movix = providerByKey.getValue("movix").api as MovixProvider
 
+    /**
+     * This is intentionally a non-network URL. CloudStream uses mainUrl to decide
+     * which MainAPI owns a result before it calls load(). The actual network calls
+     * happen only against TMDB or the streaming providers below.
+     */
+    override var mainUrl = "https://frenchhub.local"
     override var name = "FrenchHub"
-    override var mainUrl = "https://github.com/j97970293-lang/cloudstream-extensions-fr"
     override var lang = "fr"
     override val hasMainPage = true
     override val hasQuickSearch = true
-    override val mainPage = mainPageOf("all" to "Catalogue français")
-    override val supportedTypes = setOf(
-        TvType.Movie,
-        TvType.TvSeries,
-        TvType.Anime,
-        TvType.Cartoon,
-        TvType.Documentary,
-        TvType.Live
+    override val providerType = com.lagradost.cloudstream3.ProviderType.MetaProvider
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
+
+    override val mainPage = mainPageOf(
+        "trending/all/day" to "Tendances",
+        "movie/popular" to "Films populaires",
+        "tv/popular" to "Séries populaires",
+        "movie/top_rated" to "Films les mieux notés",
+        "tv/top_rated" to "Séries les mieux notées",
     )
 
-    private fun enabledEntries(): List<Entry> = entries.filter { FrenchHubSettings.isEnabled(it.key) }
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val results = coroutineScope {
-            enabledEntries().map { entry ->
-                async {
-                    runCatching {
-                        if (!entry.api.hasMainPage) return@runCatching emptyList<SearchResponse>()
-                        val section = entry.api.mainPage.firstOrNull { it.data.isNotBlank() }
-                            ?: return@runCatching emptyList<SearchResponse>()
-                        val response = entry.api.getMainPage(
-                            page,
-                            MainPageRequest(section.name, section.data, section.horizontalImages)
-                        ) ?: return@runCatching emptyList()
-                        response.items.flatMap { it.list }.map { wrapSearch(entry, it) }
-                    }.getOrDefault(emptyList())
-                }
-            }.awaitAll().flatten()
-        }
-        return newHomePageResponse(request.name, deduplicate(results), results.isNotEmpty())
+        val items = FrenchHubTmdb.catalog(request.data, page).map { card -> card.toSearchResponse() }
+        return newHomePageResponse(request.name, items, hasNext = items.isNotEmpty())
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val results = coroutineScope {
-            enabledEntries().map { entry ->
-                async {
-                    runCatching {
-                        entry.api.search(query).orEmpty().map { wrapSearch(entry, it) }
-                    }.getOrDefault(emptyList())
-                }
-            }.awaitAll().flatten()
-        }
-        return deduplicate(results)
+        return FrenchHubTmdb.search(query)
+            .distinctBy { "${it.type}:${it.id}" }
+            .map { it.toSearchResponse() }
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse> {
-        val results = coroutineScope {
-            enabledEntries().map { entry ->
-                async {
-                    runCatching {
-                        (entry.api.quickSearch(query) ?: entry.api.search(query).orEmpty())
-                            .map { wrapSearch(entry, it) }
-                    }.getOrDefault(emptyList())
-                }
-            }.awaitAll().flatten()
-        }
-        return deduplicate(results).take(40)
+        return search(query).take(40)
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val route = decodeTitleRoute(url) ?: throw ErrorLoadingException("URL FrenchHub invalide")
-        val entry = entries.firstOrNull { it.key == route.key && FrenchHubSettings.isEnabled(it.key) }
-            ?: throw ErrorLoadingException("Provider FrenchHub désactivé ou introuvable")
-        val response = entry.api.load(route.value.orEmpty())
-            ?: throw ErrorLoadingException("La fiche ${entry.label} n’a pas répondu")
-        return wrapLoad(entry, route.value.orEmpty(), response)
+        val parts = url.removePrefix(mainUrl).trim('/').split('/')
+        if (parts.size < 3 || parts[0] != "catalog") {
+            throw ErrorLoadingException("URL FrenchHub invalide : le catalogue doit utiliser une fiche TMDB")
+        }
+        val type = parts[1].takeIf { it == "movie" || it == "tv" }
+            ?: throw ErrorLoadingException("Type TMDB invalide")
+        val tmdbId = parts[2].toIntOrNull()
+            ?: throw ErrorLoadingException("ID TMDB invalide")
+        val details = FrenchHubTmdb.details(type, tmdbId)
+            ?: throw ErrorLoadingException("Fiche TMDB indisponible")
+
+        return if (type == "movie") {
+            loadMovie(tmdbId, details)
+        } else {
+            loadSeries(tmdbId, details)
+        }
+    }
+
+    private suspend fun loadMovie(id: Int, details: JSONObject): MovieLoadResponse {
+        val title = details.optString("title").ifBlank { details.optString("original_title") }
+        val imdbId = FrenchHubTmdb.externalId(details, "imdb_id")
+        val data = FrenchHubMediaData(
+            tmdbId = id,
+            type = "movie",
+            title = title,
+            imdbId = imdbId,
+            year = FrenchHubTmdb.year(details.optString("release_date")),
+        ).toJson()
+        return newMovieLoadResponse(title, catalogUrl("movie", id), TvType.Movie, data) {
+            posterUrl = FrenchHubTmdb.image(details.optString("poster_path"))
+            backgroundPosterUrl = FrenchHubTmdb.image(details.optString("backdrop_path"), "original")
+            plot = details.optString("overview").takeIf { it.isNotBlank() }
+            year = FrenchHubTmdb.year(details.optString("release_date"))
+            tags = jsonNames(details.optJSONArray("genres"))
+            score = details.optDouble("vote_average").takeIf { it > 0.0 }?.let { com.lagradost.cloudstream3.Score.from10(it) }
+            duration = details.optInt("runtime").takeIf { it > 0 }
+            addImdbId(imdbId)
+            addTMDbId(id.toString())
+        }
+    }
+
+    private suspend fun loadSeries(id: Int, details: JSONObject): LoadResponse {
+        val title = details.optString("name").ifBlank { details.optString("original_name") }
+        val imdbId = FrenchHubTmdb.externalId(details, "imdb_id")
+        val seasonNumbers = details.optJSONArray("seasons")
+            ?.toJsonObjects()
+            ?.mapNotNull { it.optInt("season_number").takeIf { number -> number > 0 } }
+            .orEmpty()
+        val episodes = coroutineScope {
+            seasonNumbers.chunked(4).flatMap { batch ->
+                batch.map { season ->
+                    async { loadSeasonEpisodes(id, season, title, imdbId) }
+                }.awaitAll().flatten()
+            }
+        }.sortedWith(compareBy<Episode> { it.season ?: Int.MAX_VALUE }.thenBy { it.episode ?: Int.MAX_VALUE })
+
+        val isAnime = details.optString("original_language") in setOf("ja", "zh", "ko") &&
+            jsonNames(details.optJSONArray("genres")).any { it.equals("Animation", true) }
+        val url = catalogUrl("tv", id)
+        return if (isAnime) {
+            newAnimeLoadResponse(title, url, TvType.Anime) {
+                addEpisodes(DubStatus.Subbed, episodes)
+                applySeriesMetadata(details, id, imdbId)
+            }
+        } else {
+            newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+                applySeriesMetadata(details, id, imdbId)
+            }
+        }
+    }
+
+    private suspend fun loadSeasonEpisodes(
+        id: Int,
+        season: Int,
+        title: String,
+        imdbId: String?,
+    ): List<Episode> {
+        val json = FrenchHubTmdb.season(id, season) ?: return emptyList()
+        return json.optJSONArray("episodes")?.toJsonObjects()?.mapNotNull { item ->
+            val number = item.optInt("episode_number").takeIf { it > 0 } ?: return@mapNotNull null
+            newEpisode(
+                FrenchHubMediaData(
+                    tmdbId = id,
+                    type = "tv",
+                    title = title,
+                    imdbId = imdbId,
+                    season = season,
+                    episode = number,
+                    firstAired = item.optString("air_date").takeIf { it.isNotBlank() },
+                )
+            ) {
+                name = item.optString("name").ifBlank { "Épisode $number" }
+                this.season = season
+                this.episode = number
+                description = item.optString("overview").takeIf { it.isNotBlank() }
+                posterUrl = FrenchHubTmdb.image(item.optString("still_path"))
+                score = item.optDouble("vote_average").takeIf { it > 0.0 }?.let { com.lagradost.cloudstream3.Score.from10(it) }
+                date = parseDate(item.optString("air_date"))
+            }
+        }.orEmpty()
+    }
+
+    private fun TvSeriesLoadResponse.applySeriesMetadata(details: JSONObject, id: Int, imdbId: String?) {
+        posterUrl = FrenchHubTmdb.image(details.optString("poster_path"))
+        backgroundPosterUrl = FrenchHubTmdb.image(details.optString("backdrop_path"), "original")
+        plot = details.optString("overview").takeIf { it.isNotBlank() }
+        year = FrenchHubTmdb.year(details.optString("first_air_date"))
+        tags = jsonNames(details.optJSONArray("genres"))
+        score = details.optDouble("vote_average").takeIf { it > 0.0 }?.let { com.lagradost.cloudstream3.Score.from10(it) }
+        addImdbId(imdbId)
+        addTMDbId(id.toString())
+    }
+
+    private fun AnimeLoadResponse.applySeriesMetadata(details: JSONObject, id: Int, imdbId: String?) {
+        posterUrl = FrenchHubTmdb.image(details.optString("poster_path"))
+        backgroundPosterUrl = FrenchHubTmdb.image(details.optString("backdrop_path"), "original")
+        plot = details.optString("overview").takeIf { it.isNotBlank() }
+        year = FrenchHubTmdb.year(details.optString("first_air_date"))
+        tags = jsonNames(details.optJSONArray("genres"))
+        score = details.optDouble("vote_average").takeIf { it > 0.0 }?.let { com.lagradost.cloudstream3.Score.from10(it) }
+        addImdbId(imdbId)
+        addTMDbId(id.toString())
     }
 
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
+        callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val route = decodeDataRoute(data) ?: return false
-        val routes = if (route.bundle.isNotEmpty()) {
-            route.bundle
-        } else {
-            listOfNotNull(route.value?.let { ProviderData(route.key, it) })
-        }
-        val activeEntries = enabledEntries().associateBy { it.key }
-        val sources = Collections.synchronizedMap(LinkedHashMap<String, ExtractorLink>())
+        val media = tryParseJson<FrenchHubMediaData>(data) ?: return false
+        val links = Collections.synchronizedMap(LinkedHashMap<String, ExtractorLink>())
         val subtitles = Collections.synchronizedMap(LinkedHashMap<String, SubtitleFile>())
+        val active = providers.filter { FrenchHubSettings.isEnabled(it.key) }
 
         val results = coroutineScope {
-            routes.mapNotNull { providerData ->
-                val entry = activeEntries[providerData.key] ?: return@mapNotNull null
+            active.mapNotNull { entry ->
                 async {
-                    withTimeoutOrNull(15_000L) {
+                    withTimeoutOrNull(18_000L) {
                         runCatching {
+                            val providerData = directProviderData(entry, media)
+                                ?: searchProviderData(entry, media)
+                                ?: return@runCatching false
                             entry.api.loadLinks(
-                                providerData.data,
+                                providerData,
                                 isCasting,
                                 { subtitle -> subtitles.putIfAbsent(subtitle.url, subtitle) },
-                                { link -> sources.putIfAbsent(link.url, link) }
+                                { link -> links.putIfAbsent(link.url, link) },
                             )
                         }.getOrDefault(false)
                     } ?: false
                 }
             }.awaitAll()
         }
+
         synchronized(subtitles) { subtitles.values.toList() }.forEach(subtitleCallback)
-        synchronized(sources) { sources.values.toList() }.forEach(callback)
-        return results.any { it }
+        synchronized(links) { links.values.toList() }.forEach(callback)
+        return results.any { it } && links.isNotEmpty()
     }
 
-    private suspend fun wrapLoad(
-        entry: Entry,
-        originalUrl: String,
-        response: LoadResponse
-    ): LoadResponse {
-        val companions = loadCompanionResponses(entry, response)
-        response.url = encodeTitleRoute(entry.key, originalUrl)
-        response.apiName = name
-
-        when (response) {
-            is MovieLoadResponse -> {
-                val bundle = mutableListOf(ProviderData(entry.key, response.dataUrl))
-                companions.forEach { (companionEntry, companionResponse) ->
-                    if (companionResponse is MovieLoadResponse) {
-                        bundle += ProviderData(companionEntry.key, companionResponse.dataUrl)
-                    }
-                }
-                response.dataUrl = encodeDataRoute(
-                    kind = "movie",
-                    key = entry.key,
-                    bundle = bundle,
-                    title = response.name
-                )
-            }
-            is LiveStreamLoadResponse -> {
-                response.dataUrl = encodeDataRoute(
-                    kind = "live",
-                    key = entry.key,
-                    bundle = listOf(ProviderData(entry.key, response.dataUrl)),
-                    title = response.name
-                )
-            }
-            is TvSeriesLoadResponse -> {
-                response.episodes = response.episodes.map { episode ->
-                    val bundle = episodeBundle(entry, episode, companions)
-                    episode.copy(
-                        data = encodeDataRoute(
-                            kind = "episode",
-                            key = entry.key,
-                            bundle = bundle,
-                            title = response.name,
-                            season = episode.season,
-                            episode = episode.episode
-                        )
-                    )
+    private fun directProviderData(entry: Entry, media: FrenchHubMediaData): String? {
+        return when (entry.key) {
+            "frembed" -> Frembed.VideoLinkData(
+                tmdbId = media.tmdbId,
+                type = if (media.type == "movie") "movie" else "tv",
+                season = media.season,
+                episode = media.episode,
+            ).toJson()
+            "movix" -> {
+                val base = movix.mainUrl.trimEnd('/')
+                if (media.type == "movie") {
+                    "$base/movie/${media.tmdbId}"
+                } else if (media.season != null && media.episode != null) {
+                    "$base/tv/${media.tmdbId}/${media.season}/${media.episode}"
+                } else {
+                    null
                 }
             }
-            is AnimeLoadResponse -> {
-                response.episodes = response.episodes.mapValues { (_, episodes) ->
-                    episodes.map { episode ->
-                        val bundle = episodeBundle(entry, episode, companions)
-                        episode.copy(
-                            data = encodeDataRoute(
-                                kind = "episode",
-                                key = entry.key,
-                                bundle = bundle,
-                                title = response.name,
-                                season = episode.season,
-                                episode = episode.episode
-                            )
-                        )
-                    }
-                }.toMutableMap()
+            else -> null
+        }
+    }
+
+    private suspend fun searchProviderData(entry: Entry, media: FrenchHubMediaData): String? {
+        if (entry.api.supportedTypes.none { type ->
+                if (media.type == "movie") type == TvType.Movie else type == TvType.TvSeries || type == TvType.Anime
+            }) return null
+
+        val candidate = entry.api.search(media.title).orEmpty()
+            .filter { result ->
+                if (media.type == "movie") result.type == TvType.Movie
+                else result.type == TvType.TvSeries || result.type == TvType.Anime
             }
-        }
-        return response
-    }
-
-    private suspend fun loadCompanionResponses(
-        primaryEntry: Entry,
-        primaryResponse: LoadResponse
-    ): List<Pair<Entry, LoadResponse>> {
-        val canAggregate = primaryResponse is MovieLoadResponse ||
-            primaryResponse is TvSeriesLoadResponse ||
-            primaryResponse is AnimeLoadResponse
-        if (!canAggregate) return emptyList()
-
-        return coroutineScope {
-            enabledEntries()
-                .filterNot { it.key == primaryEntry.key }
-                .map { entry ->
-                    async {
-                        withTimeoutOrNull(8_000L) {
-                            runCatching {
-                                val candidate = entry.api.search(primaryResponse.name).orEmpty()
-                                    .firstOrNull { similarTitle(it.name, primaryResponse.name) }
-                                    ?: return@runCatching null
-                                entry.api.load(candidate.url)?.let { entry to it }
-                            }.getOrNull()
-                        }
-                    }
-                }
-                .awaitAll()
-                .filterNotNull()
+            .firstOrNull { result -> similarTitle(result.name, media.title) }
+            ?: return null
+        val loaded = entry.api.load(candidate.url) ?: return null
+        return when (loaded) {
+            is MovieLoadResponse -> if (media.type == "movie") loaded.dataUrl else null
+            is TvSeriesLoadResponse -> loaded.episodes.firstOrNull { episode ->
+                episode.season == media.season && episode.episode == media.episode
+            }?.data
+            is AnimeLoadResponse -> loaded.episodes.values.flatten().firstOrNull { episode ->
+                episode.season == media.season && episode.episode == media.episode
+            }?.data
+            else -> null
         }
     }
 
-    private fun episodeBundle(
-        primaryEntry: Entry,
-        primaryEpisode: Episode,
-        companions: List<Pair<Entry, LoadResponse>>
-    ): List<ProviderData> {
-        val bundle = mutableListOf(ProviderData(primaryEntry.key, primaryEpisode.data))
-        companions.forEach { (entry, response) ->
-            findMatchingEpisode(response, primaryEpisode)?.let { episode ->
-                bundle += ProviderData(entry.key, episode.data)
+    private fun FrenchHubTmdbCard.toSearchResponse(): SearchResponse {
+        val url = catalogUrl(type = if (type == "tv") "tv" else "movie", id = id)
+        return if (type == "tv") {
+            newTvSeriesSearchResponse(title, url, TvType.TvSeries, fix = false) {
+                posterUrl = FrenchHubTmdb.image(posterPath)
+                year = this@toSearchResponse.year
+                this.id = this@toSearchResponse.id
+                score = this@toSearchResponse.score?.let { com.lagradost.cloudstream3.Score.from10(it) }
             }
-        }
-        return bundle
-    }
-
-    private fun findMatchingEpisode(response: LoadResponse, target: Episode): Episode? {
-        val episodes = when (response) {
-            is TvSeriesLoadResponse -> response.episodes
-            is AnimeLoadResponse -> response.episodes.values.flatten()
-            else -> emptyList()
-        }
-        return episodes.firstOrNull { episode ->
-            (episode.season ?: 1) == (target.season ?: 1) &&
-                episode.episode == target.episode
+        } else {
+            newMovieSearchResponse(title, url, TvType.Movie, fix = false) {
+                posterUrl = FrenchHubTmdb.image(posterPath)
+                year = this@toSearchResponse.year
+                this.id = this@toSearchResponse.id
+                score = this@toSearchResponse.score?.let { com.lagradost.cloudstream3.Score.from10(it) }
+            }
         }
     }
 
     private fun similarTitle(left: String, right: String): Boolean {
         val normalize = { value: String ->
-            value.lowercase()
+            value.lowercase(Locale.ROOT)
                 .replace(Regex("[^a-z0-9à-ÿ]+"), " ")
                 .trim()
         }
@@ -320,175 +349,18 @@ class FrenchHubCatalog : MainAPI() {
         return a == b || a.contains(b) || b.contains(a)
     }
 
-    private fun wrapSearch(entry: Entry, response: SearchResponse): SearchResponse {
-        val url = encodeTitleRoute(entry.key, response.url)
-        return when (response) {
-            is LiveSearchResponse -> newLiveSearchResponse(response.name, url) {
-                posterUrl = response.posterUrl
-                id = response.id
-                quality = response.quality
-                posterHeaders = response.posterHeaders
-            }
-            is AnimeSearchResponse -> newAnimeSearchResponse(
-                response.name,
-                url,
-                response.type ?: TvType.Anime,
-                fix = false
-            ) {
-                posterUrl = response.posterUrl
-                year = response.year
-                dubStatus = response.dubStatus
-                otherName = response.otherName
-                episodes = response.episodes.toMutableMap()
-                id = response.id
-                quality = response.quality
-                posterHeaders = response.posterHeaders
-            }
-            is TvSeriesSearchResponse -> newTvSeriesSearchResponse(
-                response.name,
-                url,
-                response.type ?: TvType.TvSeries,
-                fix = false
-            ) {
-                posterUrl = response.posterUrl
-                id = response.id
-                quality = response.quality
-                posterHeaders = response.posterHeaders
-            }.copy(episodes = response.episodes)
-            is MovieSearchResponse -> newMovieSearchResponse(
-                response.name,
-                url,
-                response.type ?: TvType.Movie,
-                fix = false
-            ) {
-                posterUrl = response.posterUrl
-                year = response.year
-                id = response.id
-                quality = response.quality
-                posterHeaders = response.posterHeaders
-            }
-            else -> newMovieSearchResponse(
-                response.name,
-                url,
-                response.type ?: TvType.Movie,
-                fix = false
-            ) {
-                posterUrl = response.posterUrl
-                id = response.id
-                quality = response.quality
-                posterHeaders = response.posterHeaders
-            }
-        }
+    private fun jsonNames(array: org.json.JSONArray?): List<String> {
+        return array?.toJsonObjects()?.mapNotNull { it.optString("name").takeIf(String::isNotBlank) }.orEmpty()
     }
 
-    private fun deduplicate(items: List<SearchResponse>): List<SearchResponse> {
-        return items.distinctBy { "${it.name.trim().lowercase()}|${it.type}" }
+    private fun org.json.JSONArray.toJsonObjects(): List<JSONObject> {
+        return (0 until length()).mapNotNull { optJSONObject(it) }
     }
 
-    private fun encodeTitleRoute(key: String, value: String): String =
-        "$ROUTE_BASE/title/$key?${encodeQuery(mapOf("url" to value))}"
-
-    private fun encodeDataRoute(
-        kind: String,
-        key: String,
-        bundle: List<ProviderData>,
-        title: String,
-        season: Int? = null,
-        episode: Int? = null
-    ): String {
-        val params = mutableMapOf<String, String?>(
-            "bundle" to encodeBundle(bundle),
-            "title" to title,
-            "season" to season?.toString(),
-            "episode" to episode?.toString()
-        )
-        return "$ROUTE_BASE/$kind/$key?${encodeQuery(params)}"
+    private fun parseDate(value: String?): Long? {
+        if (value.isNullOrBlank()) return null
+        return runCatching { SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(value)?.time }.getOrNull()
     }
 
-    private fun decodeTitleRoute(value: String): Route? {
-        if (value.startsWith("$ROUTE_BASE/title/")) {
-            val key = value.removePrefix("$ROUTE_BASE/title/").substringBefore('?')
-            val params = parseQuery(value)
-            return params["url"]?.let { Route("title", key, value = it) }
-        }
-        if (value.startsWith(LEGACY_TITLE_PREFIX)) {
-            val after = value.removePrefix(LEGACY_TITLE_PREFIX)
-            val key = after.substringBefore('?')
-            val params = parseQuery("?${after.substringAfter('?', "")}")
-            return params["url"]?.let { Route("title", key, value = it) }
-        }
-        return null
-    }
-
-    private fun decodeDataRoute(value: String): Route? {
-        val route = if (value.startsWith(ROUTE_BASE)) {
-            val path = value.removePrefix("$ROUTE_BASE/").substringBefore('?').split('/')
-            if (path.size < 2) return null
-            val params = parseQuery(value)
-            val bundle = params["bundle"]?.let(::decodeBundle).orEmpty()
-            Route(
-                kind = path[0],
-                key = path[1],
-                value = params["data"],
-                title = params["title"],
-                season = params["season"]?.toIntOrNull(),
-                episode = params["episode"]?.toIntOrNull(),
-                bundle = bundle
-            )
-        } else if (value.startsWith(LEGACY_DATA_PREFIX)) {
-            val after = value.removePrefix(LEGACY_DATA_PREFIX)
-            val key = after.substringBefore('?')
-            val params = parseQuery("?${after.substringAfter('?', "")}")
-            Route(
-                kind = "legacy",
-                key = key,
-                value = params["data"],
-                bundle = listOfNotNull(params["data"]?.let { ProviderData(key, it) })
-            )
-        } else {
-            return null
-        }
-        return route.takeIf { it.bundle.isNotEmpty() || !it.value.isNullOrBlank() }
-    }
-
-    private fun encodeBundle(bundle: List<ProviderData>): String {
-        return bundle.joinToString("|") { providerData ->
-            "${URLEncoder.encode(providerData.key, Charsets.UTF_8.name())}:" +
-                URLEncoder.encode(providerData.data, Charsets.UTF_8.name())
-        }
-    }
-
-    private fun decodeBundle(value: String): List<ProviderData> {
-        return value.split('|').mapNotNull { part ->
-            val separator = part.indexOf(':')
-            if (separator <= 0) return@mapNotNull null
-            val key = runCatching {
-                URLDecoder.decode(part.substring(0, separator), Charsets.UTF_8.name())
-            }.getOrNull() ?: return@mapNotNull null
-            val data = runCatching {
-                URLDecoder.decode(part.substring(separator + 1), Charsets.UTF_8.name())
-            }.getOrNull() ?: return@mapNotNull null
-            ProviderData(key, data)
-        }
-    }
-
-    private fun encodeQuery(params: Map<String, String?>): String {
-        return params.filterValues { !it.isNullOrBlank() }.entries.joinToString("&") { (key, value) ->
-            "$key=${URLEncoder.encode(value, Charsets.UTF_8.name())}"
-        }
-    }
-
-    private fun parseQuery(value: String): Map<String, String> {
-        val query = value.substringAfter('?', "")
-        if (query.isBlank()) return emptyMap()
-        return query.split('&').mapNotNull { part ->
-            val separator = part.indexOf('=')
-            if (separator <= 0) return@mapNotNull null
-            val key = part.substring(0, separator)
-            val decoded = runCatching {
-                URLDecoder.decode(part.substring(separator + 1), Charsets.UTF_8.name())
-            }.getOrNull() ?: return@mapNotNull null
-            key to decoded
-        }.toMap()
-    }
+    private fun catalogUrl(type: String, id: Int?): String = "$mainUrl/catalog/$type/${id ?: -1}"
 }

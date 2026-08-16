@@ -1,4 +1,4 @@
-version = 1
+version = 2
 
 plugins {
     id("com.android.library")
@@ -7,10 +7,10 @@ plugins {
 
 cloudstream {
     language = "fr"
-    description = "Catalogue français fédéré avec lecteurs multi-providers configurables."
+    description = "Catalogue TMDB français commun avec épisodes et lecteurs multi-providers configurables."
     authors = listOf("j97970293-lang")
     status = 1
-    tvTypes = listOf("Movie", "TvSeries", "Anime", "Cartoon", "Documentary", "Live")
+    tvTypes = listOf("Movie", "TvSeries", "Anime")
     iconUrl = "https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/master/docs/frenchhub.png"
 }
 

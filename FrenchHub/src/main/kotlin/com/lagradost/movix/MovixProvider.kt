@@ -451,7 +451,7 @@ class MovixProvider : MainAPI() {
         } else {
             emptyList()
         }
-        if (loadExtractorLinks(frembedLinks, subtitleCallback, callback)) return true
+        var found = loadExtractorLinks(frembedLinks, subtitleCallback, callback)
 
         val primaryLinks = if (type == "tv" && season != null && episode != null) {
             fstreamTvLinks(id, season, episode)
@@ -460,7 +460,7 @@ class MovixProvider : MainAPI() {
         } else {
             emptyList()
         }
-        if (loadExtractorLinks(primaryLinks, subtitleCallback, callback)) return true
+        found = loadExtractorLinks(primaryLinks, subtitleCallback, callback) || found
 
         val fallbackLinks = if (type == "tv" && season != null && episode != null) {
             wiflixTvLinks(id, season, episode) + imdbTvLinks(id, season, episode)
@@ -469,7 +469,8 @@ class MovixProvider : MainAPI() {
         } else {
             emptyList()
         }
-        return loadExtractorLinks(fallbackLinks, subtitleCallback, callback)
+        found = loadExtractorLinks(fallbackLinks, subtitleCallback, callback) || found
+        return found
     }
 
     private suspend fun loadExtractorLinks(

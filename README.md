@@ -1,47 +1,62 @@
-# FrenchHub — extension CloudStream française fédératrice
+# FrenchHub — catalogue TMDB français commun pour CloudStream
 
-FrenchHub est une **seule extension CloudStream** qui regroupe un catalogue français commun et plusieurs sources internes. Les providers ne sont pas publiés comme dix extensions séparées : ils sont embarqués dans le même fichier `FrenchHub.cs3` et interrogés lors de l’ouverture d’un titre.
+FrenchHub est une **seule extension CloudStream**. Son catalogue n’est pas celui de French-Stream, de Movix ou d’un autre site. Les cartes, les fiches, les affiches, les séries et les épisodes proviennent d’un catalogue TMDB centralisé; les sites de streaming ne sont sollicités qu’au moment où l’utilisateur ouvre un film ou lance un épisode.
 
-## Installation CloudStream
+## Installation
 
-Ajoute le dépôt suivant dans CloudStream :
+Ajoute ce dépôt dans CloudStream :
 
 ```text
 https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/master/repo.json
 ```
 
-Après installation, une seule extension doit apparaître : **FrenchHub**. La fiche d’un titre conserve une seule entrée de contenu, puis `loadLinks` interroge les providers activés et affiche leurs lecteurs comme sources vidéo.
+Après la mise à jour, une seule extension doit apparaître : **FrenchHub**. La version publiée du plugin doit être supérieure à l’ancienne afin que CloudStream remplace réellement le fichier déjà installé.
 
-## Providers internes
+## Fonctionnement du catalogue commun
 
-| Provider | Films | Séries | Animés | Réglable |
-|---|---:|---:|---:|---:|
-| French-Stream | Oui | Oui | Non | Oui |
-| Movix | Oui | Oui | Non | Oui |
-| FSTV | Oui | Oui | Non | Oui |
-| French-Manga | Oui | Oui | Oui | Oui |
-| Wiflix | Oui | Oui | Non | Oui |
-| Frembed | Oui | Oui | Oui | Oui |
-| French Anime | Oui | Oui | Oui | Oui |
-| FS Mirror | Oui | Oui | Non | Oui |
-| JourFilm | Oui | Oui | Non | Oui |
-| DoTriv | Oui | Oui | Non | Oui |
+La page d’accueil et la recherche utilisent les identifiants TMDB. Une fiche de film est représentée par son `tmdbId`; une fiche de série contient les saisons et les épisodes TMDB; chaque épisode conserve son numéro de saison, son numéro d’épisode, son titre et sa date.
 
-Les réglages de FrenchHub sont accessibles depuis la page de l’extension dans CloudStream. Chaque provider peut être activé ou désactivé individuellement; après l’enregistrement, l’application recharge les sources avec la nouvelle sélection.
+Lorsqu’un épisode est lancé, FrenchHub prépare un payload commun contenant notamment les éléments suivants :
 
-## Lecteurs et ordre de résolution
+| Donnée commune | Utilisation |
+|---|---|
+| Identifiant TMDB | Recherche directe des sources Movix et Frembed, lorsqu’elles le permettent. |
+| Identifiant IMDb | Fallbacks et providers qui indexent leurs contenus avec IMDb. |
+| Titre normalisé | Recherche dans French-Stream, Wiflix, French Anime et les autres providers par nom. |
+| Année | Désambiguïsation des remakes et titres homonymes. |
+| Saison et épisode | Résolution de l’épisode exact, sans mélanger les épisodes d’une autre saison. |
 
-Les liens sont résolus au moment où l’utilisateur ouvre le titre. Frembed est prioritaire lorsqu’il renvoie un lien valide. Movix utilise ensuite ses domaines actifs découverts via `address.json`, les endpoints FStream/Wiflix/J1F lorsqu’ils répondent, et filtre les URLs de test ou les pages manifestement fausses. Les liens d’hosters sont transmis au système d’extracteurs CloudStream afin d’obtenir les flux réels plutôt que d’afficher uniquement une WebView.
+FrenchHub exécute ensuite les providers activés en parallèle. Les liens vidéo et les sous-titres sont rassemblés dans les sources de CloudStream, les URLs identiques étant dédupliquées. L’utilisateur doit donc voir la fiche TMDB commune, ses épisodes communs, puis les lecteurs disponibles de Frembed, Movix, French-Stream, Wiflix et des autres providers qui trouvent effectivement une source.
+
+## Providers et réglages
+
+Les réglages permettent d’activer ou désactiver individuellement les providers internes. Les providers TMDB directs sont privilégiés lorsqu’ils supportent l’identifiant : Frembed reçoit directement le TMDB ID, le type et l’épisode; Movix reçoit directement le chemin TMDB correspondant. Les autres providers utilisent une recherche par titre, puis FrenchHub récupère la donnée de lecture de la fiche correspondante.
+
+| Provider interne | Rôle dans le catalogue commun |
+|---|---|
+| Frembed | Résolution directe par TMDB ID, saison et épisode. |
+| Movix | Résolution directe par TMDB ID, avec ses fallbacks intégrés. |
+| French-Stream | Recherche de la fiche française puis extraction de ses hosters. |
+| Wiflix | Recherche de la fiche puis résolution de son payload. |
+| French Anime, FS Mirror, JourFilm, DoTriv et French-Manga | Fallbacks par recherche lorsqu’un titre et un épisode correspondants sont trouvés. |
+
+Un provider désactivé ne participe pas à la recherche des lecteurs. Les lecteurs ne sont jamais garantis : ils dépendent de la disponibilité réelle du domaine, de Cloudflare et des hosters distants.
+
+## Mise à jour importante après l’ancienne erreur
+
+L’ancienne version utilisait des URLs internes `frenchhub://...`, qui pouvaient être réécrites par CloudStream avant l’appel de `load()`. FrenchHub utilise maintenant des URLs HTTPS internes commençant par `https://frenchhub.local`, qui correspondent au `mainUrl` du MetaProvider et permettent à CloudStream d’identifier correctement FrenchHub. Le catalogue TMDB ne dépend donc plus d’une URL de fiche French-Stream pour ouvrir un titre.
+
+Après l’installation du dépôt, force la mise à jour de FrenchHub ou désinstalle l’ancienne version avant de la réinstaller. Vérifie que la version affichée est **2** ou supérieure.
 
 ## Compatibilité Nuvio
 
-Le dossier `nuvio/` conserve un addon Nuvio compatible basé sur les providers français Snixi, avec des providers Gowaru supplémentaires dans `nuvio/gowaru/`. Le manifest mobile Snixi est disponible ici après publication :
+Le dossier [`nuvio/`](nuvio/) reste un addon séparé. Son manifest est disponible ici :
 
 ```text
 https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/master/nuvio/manifest.json
 ```
 
-Le serveur Nuvio n’est pas automatiquement hébergé par GitHub Pages. Pour le mode addon serveur, déploie le dossier `nuvio/` sur un hébergement Node.js, puis utilise l’URL publique de son `manifest.json`.
+Le serveur Node.js Nuvio doit être déployé séparément sur un hébergement public; GitHub ne l’exécute pas automatiquement.
 
 ## Développement
 
@@ -49,8 +64,8 @@ Le serveur Nuvio n’est pas automatiquement hébergé par GitHub Pages. Pour le
 ./gradlew :FrenchHub:make makePluginsJson
 ```
 
-Le workflow GitHub compile le seul fichier `FrenchHub.cs3`, vérifie syntaxiquement les providers JavaScript Nuvio et publie `plugins.json` dans la branche `builds`.
+Le workflow GitHub compile un seul fichier `FrenchHub.cs3`, vérifie syntaxiquement les providers JavaScript Nuvio et publie `plugins.json`, `repo.json` et `FrenchHub.cs3` dans la branche `builds`.
 
-## Avertissement
+## Limites connues
 
-La disponibilité d’un lecteur dépend du domaine distant, de Cloudflare et de l’état réel de l’hoster. Un provider peut rester activable dans l’extension tout en ne retournant temporairement aucun lecteur si son site est bloqué ou hors service.
+Les providers de sites n’utilisent pas tous les mêmes identifiants. Lorsqu’un provider ne supporte pas TMDB ou IMDb directement, FrenchHub doit rechercher le titre sur son site; si le titre, l’année ou l’épisode ne correspondent pas, ce provider ne produira aucun lecteur. Cette absence n’empêche pas les autres providers de retourner leurs sources.
