@@ -27,17 +27,23 @@ class WiflixProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     private val interceptor = CloudflareKiller()
 
+    private val browserHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    )
+
+    /**
+     * Le site flemmix.bond sert un JS challenge anti-bot à la première visite
+     * (page "One moment, please...") : sans l'interceptor CloudflareKiller, les
+     * requêtes retournent une page vide de validation. On le passe donc sur
+     * toutes les requêtes GET, et sur le POST de recherche.
+     */
     suspend fun avoidCloudflare(url: String): NiceResponse {
-        return if (!app.get(url).isSuccessful) {
-            app.get(url, interceptor = interceptor)
-        } else {
-            app.get(url)
-        }
+        return app.get(url, headers = browserHeaders, interceptor = interceptor)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val link = "$mainUrl/index.php?do=search&subaction=search&search_start=0&full_search=1&result_from=1&story=$query&titleonly=3&searchuser=&replyless=0&replylimit=0&searchdate=0&beforeafter=after&sortby=date&resorder=desc&showposts=0&catlist%5B%5D=0"
-        val document = app.post(link).document
+        val document = app.post(link, headers = browserHeaders, interceptor = interceptor).document
         val results = document.select("div#dle-content > div.clearfix")
 
         return results.mapNotNull { article ->

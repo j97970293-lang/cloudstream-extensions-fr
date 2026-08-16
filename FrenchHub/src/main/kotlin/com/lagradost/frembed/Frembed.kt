@@ -340,8 +340,108 @@ class Frembed : MainAPI() {
             Log.e(TAG, "Erreur lors du chargement du serveur $server: ${e.message}", e)
         }
     }
+    // Dernier recours : l'API publique de Frembed expose directement les liens
+    // d'embed stables (les 7 serveurs privés peuvent être HS ou bloqués CF).
+    if (!found) {
+        found = emitFromPublicApi(linkData, type, subtitleCallback, callback)
+    }
     return found
 }
+
+    /**
+     * Fallback sur l'API publique Frembed : /api/public/v1/movies/{tmdbId} et
+     * /api/public/v1/tv/{tmdbId}?sa=S&epi=E retournent {result:{items:[{version, quality, link}]}}.
+     */
+    private suspend fun emitFromPublicApi(
+        linkData: VideoLinkData,
+        type: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        var emitted = false
+        try {
+            val publicUrl = if (type == "movie") {
+                "$mainUrl/api/public/v1/movies/${linkData.tmdbId}"
+            } else {
+                "$mainUrl/api/public/v1/tv/${linkData.tmdbId}?sa=${linkData.season ?: 1}&epi=${linkData.episode ?: 1}"
+            }
+            val response = app.get(
+                publicUrl,
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                    "Accept" to "application/json",
+                ),
+            )
+            if (response.code != 200) return false
+            val text = response.text.trim()
+            if (!text.startsWith("{") || !text.contains("items")) return false
+            val root = org.json.JSONObject(text)
+            val result = root.optJSONObject("result") ?: return false
+            val items = result.optJSONArray("items") ?: return false
+            (0 until items.length()).forEach { index ->
+                val item = items.optJSONObject(index) ?: return@forEach
+                val link = item.optString("link").trim().takeIf { it.isNotBlank() } ?: return@forEach
+                val version = item.optString("version").takeIf { it.isNotBlank() }
+                val quality = item.optString("quality").takeIf { it.isNotBlank() }
+                val label = version?.takeIf { it != "Unknown" }
+                val hostLabel = if (label != null) "$name [$label]" else name
+                if (loadExtractor(link, mainUrl, subtitleCallback) { emittedItem ->
+                        emitted = true
+                        val qualityValue = qualityFromName(quality, link)
+                            ?: emittedItem.quality.takeIf { it > Qualities.Unknown.value }
+                            ?: Qualities.Unknown.value
+                        callback(
+                            ExtractorLink(
+                                source = "$label ${emittedItem.source}".trim(),
+                                name = "$label ${emittedItem.name}".trim(),
+                                url = emittedItem.url,
+                                referer = emittedItem.referer,
+                                quality = qualityValue,
+                                headers = emittedItem.headers,
+                                type = emittedItem.type,
+                            )
+                        )
+                    }
+                ) {
+                    return@forEach
+                }
+                if (link.contains(".m3u8", ignoreCase = true) || link.contains(".mp4", ignoreCase = true)) {
+                    val isM3U8 = link.contains(".m3u8", ignoreCase = true)
+                    emitted = true
+                    callback.invoke(
+                        newExtractorLink(
+                            source = hostLabel,
+                            name = "$hostLabel",
+                            url = link,
+                            type = if (isM3U8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = mainUrl
+                            this.quality = qualityFromName(quality, link) ?: Qualities.Unknown.value
+                        }
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Erreur fallback API publique: ${e.message}", e)
+        }
+        return emitted
+    }
+
+    @Suppress("DEPRECATION")
+    private fun qualityFromName(quality: String?, url: String): Int? {
+        val value = (quality?.uppercase() ?: "").let { it }
+        return when {
+            "4K" in value || "2160" in value -> Qualities.P2160.value
+            "1080" in value || "FHD" in value -> Qualities.P1080.value
+            "720" in value || "HD" in value -> Qualities.P720.value
+            "480" in value -> Qualities.P480.value
+            url.contains("2160", ignoreCase = true) -> Qualities.P2160.value
+            url.contains("1080", ignoreCase = true) -> Qualities.P1080.value
+            url.contains("720", ignoreCase = true) -> Qualities.P720.value
+            url.contains("480", ignoreCase = true) -> Qualities.P480.value
+            else -> null
+        }
+    }
 
     private fun extractStreamUrl(response: String): String? {
     val t = response.trim()

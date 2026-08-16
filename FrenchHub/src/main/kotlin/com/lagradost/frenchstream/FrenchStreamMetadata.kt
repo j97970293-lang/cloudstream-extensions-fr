@@ -156,6 +156,34 @@ internal object FrenchStreamMetadata {
             .filterValues { it.isNotEmpty() }
     }
 
+    /**
+     * Parse le format de l'agrégateur Movix (api/fstream et api/wiflix) :
+     * {players: {VFQ:[{url, type, quality, player}], VFF:[...], VOSTFR:[...], VO:[...]}, ...}
+     * Les langues sont mappées vers les labels lisibles (VFF/VFQ → VF).
+     */
+    fun movixMovieLinks(root: JSONObject): Map<String, List<String>> {
+        val players = root.optJSONObject("players") ?: return emptyMap()
+        val links = linkedMapOf<String, MutableList<String>>()
+        fun add(language: String, url: String?) {
+            val value = url?.trim()?.takeIf(::isHttpUrl) ?: return
+            links.getOrPut(language) { mutableListOf() }.add(value)
+        }
+        players.keys().asSequence().sorted().forEach { languageKey ->
+            val array = players.optJSONArray(languageKey) ?: return@forEach
+            val label = when (languageKey.uppercase()) {
+                "VFF", "VFQ", "VF" -> "VF"
+                "VOSTFR", "VO" -> languageKey.uppercase()
+                else -> languageKey.uppercase().takeIf { it.isNotBlank() } ?: return@forEach
+            }
+            (0 until array.length()).forEach { index ->
+                val item = array.optJSONObject(index) ?: return@forEach
+                add(label, item.optString("url"))
+            }
+        }
+        return links.mapValues { (_, urls) -> urls.distinct() }
+            .filterValues { it.isNotEmpty() }
+    }
+
     fun episodeLinks(root: JSONObject): Map<Int, Map<String, List<String>>> {
         val episodes = sortedMapOf<Int, MutableMap<String, List<String>>>()
         listOf("vf", "vostfr").forEach { language ->

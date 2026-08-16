@@ -583,8 +583,13 @@ class FrenchStreamProvider : MainAPI() {
         if (!isSeries) {
             val contentId = extractContentId(url)
                 ?: throw ErrorLoadingException("Identifiant French-Stream absent de l'URL")
-            val apiUrl = "$mainUrl/engine/ajax/film_api.php?id=$contentId"
-            return newMovieLoadResponse(canonicalTitle, url, TvType.Movie, apiUrl) {
+            val contentApi = "$mainUrl/engine/ajax/film_api.php?id=$contentId"
+            // L'ancien endpoint film_api.php retourne désormais 404. Les lecteurs
+            // French-Stream (vidzy, uqload, etc.) sont aussi exposés par l'agrégateur
+            // Movix : le miroir api.movix.fun expose api/fstream avec les mêmes liens.
+            val movixApi = "https://api.movix.fun/api/fstream/movie/${contentId}"
+            val dataUrl = "$contentApi|$movixApi"
+            return newMovieLoadResponse(canonicalTitle, url, TvType.Movie, dataUrl) {
                 posterUrl = tmdbPoster ?: poster
                 backgroundPosterUrl = background
                 logoUrl = logo(details)
@@ -659,13 +664,44 @@ class FrenchStreamProvider : MainAPI() {
             payload.links.forEach { (language, links) ->
                 groupedLinks.getOrPut(language) { mutableListOf() }.addAll(links)
             }
-        } else if (data.contains("film_api.php")) {
-            // Le site peut répondre une page de vérification navigateur ou une 404 HTML : ne pas laisser
-            // remonter la JSONException jusqu'à l'UI.
-            val json = fetchJson(data) ?: return false
-            FrenchStreamMetadata.movieLinks(json).forEach { (language, links) ->
-                groupedLinks.getOrPut(language) { mutableListOf() }.addAll(links)
+        } else if (data.contains("film_api.php") || data.contains("api.movix")) {
+            val parts = data.split("|")
+            var fetched = false
+            // Agrégateur Movix : expose les lecteurs French-Stream par langue
+            // (VFQ = VF, VFF = VF, VOSTFR = VOSTFR, VO = VO).
+            val movixUrl = parts.firstOrNull { it.contains("api.movix") }
+            if (movixUrl != null) {
+                val movixJson = runCatching {
+                    JSONObject(
+                        app.get(
+                            movixUrl,
+                            headers = mapOf(
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                                "Origin" to "https://movix.show",
+                                "Referer" to "https://movix.show/",
+                            ),
+                        ).text,
+                    )
+                }.getOrNull()
+                if (movixJson != null && movixJson.has("players")) {
+                    fetched = true
+                    FrenchStreamMetadata.movixMovieLinks(movixJson).forEach { (language, links) ->
+                        groupedLinks.getOrPut(language) { mutableListOf() }.addAll(links)
+                    }
+                }
             }
+            // Ancien endpoint film_api.php (désormais souvent 404) : en dernier recours.
+            val legacyUrl = parts.firstOrNull { it.contains("film_api.php") }
+            if (legacyUrl != null) {
+                val legacyJson = fetchJson(legacyUrl)
+                if (legacyJson != null) {
+                    fetched = true
+                    FrenchStreamMetadata.movieLinks(legacyJson).forEach { (language, links) ->
+                        groupedLinks.getOrPut(language) { mutableListOf() }.addAll(links)
+                    }
+                }
+            }
+            if (!fetched) return false
         } else if (data.contains("ep-data.php")) {
             val parts = data.split("|")
             val apiUrl = parts[0]
