@@ -245,6 +245,10 @@ class FrenchHubCatalog : MainAPI() {
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
         val media = tryParseJson<FrenchHubMediaData>(data) ?: return false
+        // Les sous-providers (FStream, Movix, Wiflix, …) partagent souvent les mêmes
+        // liens finaux (vidzy, uqload, …). Il faut conserver UN lecteur par
+        // (provider, URL) et non par URL seule, sinon le premier provider à émettre
+        // masque tous les lecteurs des autres sources.
         val links = Collections.synchronizedMap(LinkedHashMap<String, ExtractorLink>())
         val subtitles = Collections.synchronizedMap(LinkedHashMap<String, SubtitleFile>())
         val active = providers.filter { FrenchHubSettings.isEnabled(it.key) }
@@ -261,7 +265,9 @@ class FrenchHubCatalog : MainAPI() {
                                 providerData,
                                 isCasting,
                                 { subtitle -> subtitles.putIfAbsent(subtitle.url, subtitle) },
-                                { link -> links.putIfAbsent(link.url, link) },
+                                { link ->
+                                    links.putIfAbsent("${entry.key}|${link.url}", link)
+                                },
                             )
                         }.getOrDefault(false)
                     } ?: false

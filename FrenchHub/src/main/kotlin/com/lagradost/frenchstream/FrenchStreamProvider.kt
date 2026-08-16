@@ -744,7 +744,27 @@ class FrenchStreamProvider : MainAPI() {
                 }.awaitAll().flatten()
             }
         }
-        FrenchStreamQuality.bestFirst(resolvedLinks).forEach { callback(it.link) }
+        // Préfixe la source « French-Stream » pour que l'utilisateur voie clairement
+        // d'où vient chaque lecteur (le catalogue françaisHub conserve un lecteur
+        // par (provider, URL), donc les doublons d'URL entre providers sont gardés).
+        FrenchStreamQuality.bestFirst(resolvedLinks).forEach { resolved ->
+            callback(sourcePrefixed(resolved.link))
+        }
         return resolvedLinks.isNotEmpty()
+    }
+
+    private fun sourcePrefixed(link: ExtractorLink): ExtractorLink {
+        val name = link.name.takeIf { it.startsWith("French-Stream", ignoreCase = true) } ?: "French-Stream ${link.name}"
+        val source = link.source.takeIf { it.startsWith("French-Stream", ignoreCase = true) } ?: "French-Stream ${link.source}"
+        @Suppress("DEPRECATION_ERROR")
+        return ExtractorLink(
+            source = source,
+            name = name,
+            url = link.url,
+            referer = link.referer,
+            quality = link.quality,
+            headers = link.headers,
+            type = link.type
+        )
     }
 }
