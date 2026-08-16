@@ -1,56 +1,56 @@
-# CloudStream Extensions FR
+# FrenchHub — extension CloudStream française fédératrice
 
-Dépôt public d’extensions CloudStream françaises reconstruites à partir de providers et d’extracteurs publics. Le code est organisé en modules Kotlin indépendants afin que chaque provider puisse être testé, corrigé et publié séparément.
+FrenchHub est une **seule extension CloudStream** qui regroupe un catalogue français commun et plusieurs sources internes. Les providers ne sont pas publiés comme dix extensions séparées : ils sont embarqués dans le même fichier `FrenchHub.cs3` et interrogés lors de l’ouverture d’un titre.
 
-## Dépôt CloudStream
+## Installation CloudStream
 
-Dans CloudStream, ajoute le manifest suivant :
+Ajoute le dépôt suivant dans CloudStream :
 
 ```text
 https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/master/repo.json
 ```
 
-CloudStream lira ensuite la liste publiée dans la branche `builds` et proposera les fichiers `.cs3` disponibles.
+Après installation, une seule extension doit apparaître : **FrenchHub**. La fiche d’un titre conserve une seule entrée de contenu, puis `loadLinks` interroge les providers activés et affiche leurs lecteurs comme sources vidéo.
 
-## Modules initiaux
+## Providers internes
 
-| Module | Fonction |
-|---|---|
-| FrenchStreamProvider | Catalogue French-Stream, recherche, films, séries, saisons et lecteurs multiples |
-| Movix | Catalogue TMDB, recherche, films, séries, Frembed et providers Movix |
-| FSTV | Provider complémentaire French-Stream TV |
-| FrenchManga | Provider français complémentaire |
-| WiflixProvider | Films et séries Wiflix |
-| Frembed | Résolution de liens Frembed |
-| FrenchAnime | Catalogue FrenchAnime |
-| FsMirrorLol | Miroir French-Stream |
-| JourFilm | Provider 1 Jour 1 Film |
-| DoTriv | Provider DoTriv |
+| Provider | Films | Séries | Animés | Réglable |
+|---|---:|---:|---:|---:|
+| French-Stream | Oui | Oui | Non | Oui |
+| Movix | Oui | Oui | Non | Oui |
+| FSTV | Oui | Oui | Non | Oui |
+| French-Manga | Oui | Oui | Oui | Oui |
+| Wiflix | Oui | Oui | Non | Oui |
+| Frembed | Oui | Oui | Oui | Oui |
+| French Anime | Oui | Oui | Oui | Oui |
+| FS Mirror | Oui | Oui | Non | Oui |
+| JourFilm | Oui | Oui | Non | Oui |
+| DoTriv | Oui | Oui | Non | Oui |
 
-Les modules seront marqués comme opérationnels, lents ou indisponibles selon les tests réseau réels. Un provider qui renvoie une erreur HTTP ne doit pas empêcher les autres plugins de se compiler ou de se charger.
+Les réglages de FrenchHub sont accessibles depuis la page de l’extension dans CloudStream. Chaque provider peut être activé ou désactivé individuellement; après l’enregistrement, l’application recharge les sources avec la nouvelle sélection.
 
-## Lecteurs et extracteurs
+## Lecteurs et ordre de résolution
 
-Les providers distinguent toujours le catalogue, la fiche, les épisodes et la résolution des liens. Pour un film, une seule fiche est exposée; les lecteurs sont ensuite résolus par `loadLinks`. Les séries exposent un épisode par numéro réel, puis les hosters disponibles pour cet épisode. Les extracteurs communs privilégient les liens HLS/MP4 réels, ajoutent les headers et referers nécessaires et ignorent les réponses HTML ou JSON invalides.
+Les liens sont résolus au moment où l’utilisateur ouvre le titre. Frembed est prioritaire lorsqu’il renvoie un lien valide. Movix utilise ensuite ses domaines actifs découverts via `address.json`, les endpoints FStream/Wiflix/J1F lorsqu’ils répondent, et filtre les URLs de test ou les pages manifestement fausses. Les liens d’hosters sont transmis au système d’extracteurs CloudStream afin d’obtenir les flux réels plutôt que d’afficher uniquement une WebView.
 
 ## Compatibilité Nuvio
 
-Les providers Nuvio utilisent un format JavaScript différent des plugins CloudStream `.cs3`. Un adaptateur séparé sera conservé dans le dépôt sous `nuvio/` lorsque le provider possède une implémentation Nuvio fiable; il ne sera pas mélangé au build Gradle CloudStream.
+Le dossier `nuvio/` conserve un addon Nuvio compatible basé sur les providers français Snixi, avec des providers Gowaru supplémentaires dans `nuvio/gowaru/`. Le manifest mobile Snixi est disponible ici après publication :
 
-## Build local
-
-```bash
-./gradlew make
-./gradlew makePluginsJson
+```text
+https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/master/nuvio/manifest.json
 ```
 
-Pour compiler un module précis :
+Le serveur Nuvio n’est pas automatiquement hébergé par GitHub Pages. Pour le mode addon serveur, déploie le dossier `nuvio/` sur un hébergement Node.js, puis utilise l’URL publique de son `manifest.json`.
+
+## Développement
 
 ```bash
-./gradlew :FrenchStreamProvider:make
-./gradlew :Movix:make
+./gradlew :FrenchHub:make makePluginsJson
 ```
 
-## Références de conception
+Le workflow GitHub compile le seul fichier `FrenchHub.cs3`, vérifie syntaxiquement les providers JavaScript Nuvio et publie `plugins.json` dans la branche `builds`.
 
-Le dépôt s’inspire de `Nikola17/cloudstream-frenchstream`, de la structure de publication Phisher/Megix et des providers français publics référencés dans le dossier de documentation. Les implémentations sont réécrites ou adaptées; les artefacts `.cs3` déjà cassés ne sont pas considérés comme une correction source.
+## Avertissement
+
+La disponibilité d’un lecteur dépend du domaine distant, de Cloudflare et de l’état réel de l’hoster. Un provider peut rester activable dans l’extension tout en ne retournant temporairement aucun lecteur si son site est bloqué ou hors service.

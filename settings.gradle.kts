@@ -1,11 +1,2 @@
-rootProject.name = "CloudStreamFrenchAddons"
-include("FrenchStreamProvider")
-include("Movix")
-include("FSTV")
-include("FrenchManga")
-include("DoTriv")
-include("Frembed")
-include("FrenchAnime")
-include("FsMirrorLol")
-include("JourFilm")
-include("WiflixProvider")
+rootProject.name = "CloudStreamFrenchHub"
+include("FrenchHub")

@@ -1,6 +1,6 @@
 {
-  "name": "CloudStream FR",
-  "description": "Extensions CloudStream françaises reconstruites et patchées",
+  "name": "FrenchHub CloudStream FR",
+  "description": "Une extension CloudStream fédératrice avec catalogue et lecteurs français configurables",
   "manifestVersion": 1,
   "pluginLists": [
     "https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/builds/plugins.json"
