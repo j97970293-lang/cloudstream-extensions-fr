@@ -33,8 +33,7 @@ import com.lagradost.frenchhub.frenchmanga.FrenchMangaProvider
 import com.lagradost.nikola.NikolaFrenchStreamProvider
 import com.lagradost.frenchhub.movix.MovixProvider
 import com.lagradost.moviebox.MovieBoxProvider
-import com.lagradost.frenchhub.animesama.AnimeSamaProvider
-import com.lagradost.frenchhub.frembed.Frembed
+import com.lagradost.frenchhub.anizone.AniZoneProvider
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -65,12 +64,7 @@ class FrenchHubCatalog : MainAPI() {
     private val movix = MovixProvider()
     private val frenchManga = FrenchMangaProvider()
     private val movieBox = MovieBoxProvider()
-    private val animeSama = AnimeSamaProvider()
-    // Providers additionnels activés via le menu Providers : leur matching passe
-    // par le matching TMDB du catalogue (titre FR + original + variantes),
-    // exactement comme French-Stream et Movix. Les sites morts ou bloqués
-    // (Wiflix/Flemmix, French Anime, 1jour1Film, DoTriv) ont été retirés.
-    private val frembed = Frembed()
+    private val aniZone = AniZoneProvider()
 
     private val providers = listOf(
         // Provider Nikola (Nikola17/cloudstream-frenchstream) : recherche directe
@@ -83,8 +77,7 @@ class FrenchHubCatalog : MainAPI() {
         Entry("movix", "Movix", movix),
         Entry("frenchmanga", "French-Manga", frenchManga),
         Entry("moviebox", "MovieBox", movieBox),
-        Entry("animesama", "Anime-Sama", animeSama),
-        Entry("frembed", "Frembed", frembed),
+        Entry("anizone", "AniZone", aniZone),
     )
 
     private val providerByKey = providers.associateBy { it.key }
@@ -313,7 +306,7 @@ class FrenchHubCatalog : MainAPI() {
         movix.mainUrl = FrenchHubSettings.domain("movix")
         frenchManga.mainUrl = FrenchHubSettings.domain("frenchmanga")
         movieBox.mainUrl = FrenchHubSettings.domain("moviebox")
-        animeSama.mainUrl = FrenchHubSettings.domain("animesama")
+        aniZone.mainUrl = FrenchHubSettings.domain("anizone")
         FrenchHubSettings.apiMainUrls.forEach { (key, url) ->
             providerByKey[key]?.api?.mainUrl = url
         }
@@ -403,20 +396,6 @@ class FrenchHubCatalog : MainAPI() {
                 }
                 parts
             }
-            "animesama" -> {
-                buildString {
-                    append("animesama://")
-                    append(media.tmdbId)
-                    append("::")
-                    append(if (media.type == "movie") "movie" else "tv")
-                    append("::")
-                    append(media.season ?: 1)
-                    append("::")
-                    append(media.episode ?: 1)
-                    append("::")
-                    append(media.title)
-                }
-            }
             "movix" -> {
                 val base = movix.mainUrl.trimEnd('/')
                 if (media.type == "movie") {
@@ -425,23 +404,6 @@ class FrenchHubCatalog : MainAPI() {
                     "$base/tv/${media.tmdbId}/${media.season}/${media.episode}"
                 } else {
                     null
-                }
-            }
-            "frembed" -> {
-                // Frembed charge ses fiches directement par ID TMDB via son API
-                // publique (/api/public/v1/movies|tv/{tmdbId}) : la correspondance
-                // est exacte, sans passer par la recherche par titre.
-                val cleanName = (media.title ?: media.originalTitle ?: return null)
-                    .lowercase()
-                    .replace(Regex("[^a-z0-9\\s]"), "")
-                    .replace(" ", "-")
-                val base = frembed.mainUrl.trimEnd('/')
-                when (media.type) {
-                    "movie" -> "$base/movies/$cleanName/${media.tmdbId}"
-                    "tv" -> if (media.season != null && media.episode != null) {
-                        "$base/tv-show/$cleanName/${media.tmdbId}"
-                    } else null
-                    else -> null
                 }
             }
             else -> null

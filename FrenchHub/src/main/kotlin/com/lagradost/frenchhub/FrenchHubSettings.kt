@@ -21,20 +21,17 @@ internal object FrenchHubSettings {
         ProviderSpec("movix", "Movix"),
         ProviderSpec("frenchmanga", "French-Manga"),
         ProviderSpec("moviebox", "MovieBox"),
-        ProviderSpec("animesama", "Anime-Sama (VF/VOSTFR)"),
-        ProviderSpec("frembed", "Frembed"),
+        ProviderSpec("anizone", "AniZone (multi-audio, sous-titres EN/FR)"),
     )
 
-    val apiMainUrls = mapOf(
-        "frembed" to "https://frembed.casa",
-    )
+    val apiMainUrls = emptyMap<String, String>()
 
     /** Domaines éditables depuis les réglages de l'extension. */
     val domains = listOf(
         DomainSpec("frenchstream", "French-Stream", "https://french-stream.one"),
         DomainSpec("movix", "Movix API", "https://api.movix.fun"),
         DomainSpec("frenchmanga", "French-Manga", "https://w16.french-manga.net"),
-        DomainSpec("animesama", "Anime-Sama", "https://anime-sama.to"),
+        DomainSpec("anizone", "AniZone", "https://anizone.to"),
         DomainSpec("moviebox", "MovieBox API", "https://h5-api.aoneroom.com"),
     )
 
