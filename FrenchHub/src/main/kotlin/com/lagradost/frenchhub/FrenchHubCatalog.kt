@@ -36,6 +36,7 @@ import com.lagradost.frenchhub.frembed.Frembed
 import com.lagradost.frenchhub.fsmirror.FsMirrorLol
 import com.lagradost.frenchhub.jourfilm.JourFilm
 import com.lagradost.frenchhub.movix.MovixProvider
+import com.lagradost.moviebox.MovieBoxProvider
 import com.lagradost.frenchhub.wiflix.WiflixProvider
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -52,6 +53,7 @@ internal data class FrenchHubMediaData(
     val tmdbId: Int,
     val type: String,
     val title: String,
+    val originalTitle: String? = null,
     val imdbId: String? = null,
     val year: Int? = null,
     val season: Int? = null,
@@ -73,6 +75,7 @@ class FrenchHubCatalog : MainAPI() {
         Entry("jourfilm", "JourFilm", JourFilm()),
         Entry("dotriv", "DoTriv", DoTriv()),
         Entry("animesama", "Anime Sama", AnimeSamaProvider()),
+        Entry("moviebox", "MovieBox (VF)", MovieBoxProvider()),
     )
 
     private val providerByKey = providers.associateBy { it.key }
@@ -140,6 +143,7 @@ class FrenchHubCatalog : MainAPI() {
             tmdbId = id,
             type = "movie",
             title = title,
+            originalTitle = details.optString("original_title").takeIf { it.isNotBlank() && it != title },
             imdbId = imdbId,
             year = FrenchHubTmdb.year(details.optString("release_date")),
         ).toJson()
@@ -166,7 +170,15 @@ class FrenchHubCatalog : MainAPI() {
         val episodes = coroutineScope {
             seasonNumbers.chunked(4).flatMap { batch ->
                 batch.map { season ->
-                    async { loadSeasonEpisodes(id, season, title, imdbId) }
+                    async {
+                        loadSeasonEpisodes(
+                            id,
+                            season,
+                            title,
+                            imdbId,
+                            details.optString("original_name").takeIf { it.isNotBlank() && it != title },
+                        )
+                    }
                 }.awaitAll().flatten()
             }
         }.sortedWith(compareBy<Episode> { it.season ?: Int.MAX_VALUE }.thenBy { it.episode ?: Int.MAX_VALUE })
@@ -191,6 +203,7 @@ class FrenchHubCatalog : MainAPI() {
         season: Int,
         title: String,
         imdbId: String?,
+        originalTitle: String? = null,
     ): List<Episode> {
         val json = FrenchHubTmdb.season(id, season) ?: return emptyList()
         return json.optJSONArray("episodes")?.toJsonObjects()?.mapNotNull { item ->
@@ -200,6 +213,7 @@ class FrenchHubCatalog : MainAPI() {
                     tmdbId = id,
                     type = "tv",
                     title = title,
+                    originalTitle = originalTitle,
                     imdbId = imdbId,
                     season = season,
                     episode = number,
@@ -289,6 +303,22 @@ class FrenchHubCatalog : MainAPI() {
 
     private fun directProviderData(entry: Entry, media: FrenchHubMediaData): String? {
         return when (entry.key) {
+            "moviebox" -> {
+                val subjectTitle = media.title
+                val parts = buildString {
+                    append("moviebox://")
+                    append(if (media.type == "movie") "movie" else "tv")
+                    append("::")
+                    append(subjectTitle)
+                    if (media.season != null && media.episode != null) {
+                        append("::")
+                        append(media.season)
+                        append("::")
+                        append(media.episode)
+                    }
+                }
+                parts
+            }
             "frembed" -> Frembed.VideoLinkData(
                 tmdbId = media.tmdbId,
                 type = if (media.type == "movie") "movie" else "tv",
@@ -314,12 +344,17 @@ class FrenchHubCatalog : MainAPI() {
                 if (media.type == "movie") type == TvType.Movie else type == TvType.TvSeries || type == TvType.Anime
             }) return null
 
-        val candidate = entry.api.search(media.title).orEmpty()
+        val results = entry.api.search(media.title).orEmpty()
             .filter { result ->
                 if (media.type == "movie") result.type == TvType.Movie
                 else result.type == TvType.TvSeries || result.type == TvType.Anime
             }
-            .firstOrNull { result -> similarTitle(result.name, media.title) }
+        // Matching multi-critères (titre français, titre original, mots clés,
+        // similarTitle en dernier recours) : les sites renomment parfois les
+        // fiches (« Le Cas Oppenheimer » ↔ « Oppenheimer »), la comparaison
+        // exacte rate trop de correspondances valides.
+        val candidate = tmdbMatch(results, media.title, media.originalTitle.orEmpty(), media.year)
+            ?: results.firstOrNull { result -> similarTitle(result.name, media.title) }
             ?: return null
         val loaded = entry.api.load(candidate.url) ?: return null
         return when (loaded) {
@@ -353,15 +388,80 @@ class FrenchHubCatalog : MainAPI() {
         }
     }
 
+    /**
+     * Clé de comparaison de titre (inspirée de Nikola/cloudstream-frenchstream et
+     * de CineStream) : minuscules, accents décomposés (NFD) et retirés, puis seuls
+     * les caractères alphanumériques conservés. « Oppenheimer » et
+     * « Le Cas Oppenheimer » deviennent donc respectivement « oppenheimer » et
+     * « lecasoppenheimer », ce qui permet une comparaison robuste.
+     */
+    private fun titleKey(value: String): String {
+        return java.text.Normalizer.normalize(value.lowercase(Locale.ROOT), java.text.Normalizer.Form.NFD)
+            .replace(Regex("""\p{M}+"""), "")
+            .replace(Regex("""[^a-z0-9]+"""), "")
+    }
+
+    /**
+     * Comparaison de titres tolérante : égalité exacte des clés, inclusion
+     * réciproque des mots principaux (>= 4 caractères), et correspondance
+     * d'au moins la moitié des mots principaux. Permet de matcher des fiches
+     * dont le site renomme le contenu (ex. « Le Cas Oppenheimer » ↔ « Oppenheimer »).
+     */
     private fun similarTitle(left: String, right: String): Boolean {
-        val normalize = { value: String ->
-            value.lowercase(Locale.ROOT)
-                .replace(Regex("[^a-z0-9à-ÿ]+"), " ")
-                .trim()
+        val a = titleKey(left)
+        val b = titleKey(right)
+        if (a.isEmpty() || b.isEmpty()) return false
+        if (a == b) return true
+        if (a.contains(b) || b.contains(a)) return true
+        // Correspondance des mots principaux : tous les mots >= 4 lettres d'un
+        // titre doivent être présents dans l'autre.
+        val words = { value: String -> value.split(Regex("""[a-z0-9]+"""")).filter { it.length >= 4 } }
+        val wa = words(a)
+        val wb = words(b)
+        if (wa.isNotEmpty() && wa.all { it in b }) return true
+        if (wb.isNotEmpty() && wb.all { it in a }) return true
+        if (wa.isNotEmpty() && wb.isNotEmpty()) {
+            val common = wa.count { it in wb }
+            return common * 2 >= wa.size + wb.size && common >= 2
         }
-        val a = normalize(left)
-        val b = normalize(right)
-        return a == b || a.contains(b) || b.contains(a)
+        return false
+    }
+
+    /**
+     * Cherche la fiche TMDB la plus proche d'un résultat de site : compare le
+     * titre français, le titre original et les titres alternatifs, en bonus la
+     * proximité d'année (écart <= 2 ans). C'est le même principe que
+     * Nikola (tmdbResult) et CineStream (Cinemeta aliases).
+     */
+    private fun tmdbMatch(
+        results: List<com.lagradost.cloudstream3.SearchResponse>,
+        title: String,
+        originalTitle: String,
+        year: Int?,
+    ): com.lagradost.cloudstream3.SearchResponse? {
+        val targetKeys = listOf(titleKey(title), titleKey(originalTitle))
+            .filter(String::isNotEmpty)
+        val targetWords = targetKeys.flatMap { titleKey(it).split(Regex("""[a-z0-9]+""")).filter { w -> w.length >= 4 } }
+
+        fun score(name: String): Int {
+            val key = titleKey(name)
+            if (targetKeys.any { it == key }) return 100
+            if (targetKeys.any { it.contains(key) || key.contains(it) }) return 60
+            val words = key.split(Regex("""[a-z0-9]+""")).filter { it.length >= 4 }
+            if (words.isNotEmpty() && words.all { it in targetKeys.joinToString("") }) return 50
+            if (targetWords.isNotEmpty() && words.any { it in targetWords } && words.size >= 2) {
+                return words.count { it in targetWords } * 20
+            }
+            return 0
+        }
+
+        return results.mapNotNull { result ->
+            val nameScore = score(result.name)
+            val titleNameScore = result.name.filter { it.isLetterOrDigit() }.length
+            result to nameScore
+        }.filter { (_, s) -> s >= 60 }
+            .maxByOrNull { (result, s) -> s * 10 + result.name.length }
+            ?.first
     }
 
     private fun jsonNames(array: org.json.JSONArray?): List<String> {

@@ -21,6 +21,7 @@ internal object FrenchHubSettings {
         ProviderSpec("jourfilm", "JourFilm"),
         ProviderSpec("dotriv", "DoTriv"),
         ProviderSpec("animesama", "Anime Sama"),
+        ProviderSpec("moviebox", "MovieBox (VF)"),
     )
 
     fun isEnabled(key: String): Boolean = getKey<Boolean>(PREFIX + key) ?: true
