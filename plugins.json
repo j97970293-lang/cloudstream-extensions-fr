@@ -1,0 +1,24 @@
+[
+    {
+        "iconUrl": "https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/master/docs/frenchhub.png",
+        "fileHash": "sha256-1bd0c267c24f59ce28016f0d8fbbf93004a37a57312701f66992d736ba0d0246",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/j97970293-lang/cloudstream-extensions-fr",
+        "fileSize": 460525,
+        "status": 1,
+        "language": "fr",
+        "authors": [
+            "j97970293-lang"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "Anime"
+        ],
+        "version": 28,
+        "internalName": "FrenchHub",
+        "description": "Catalogue TMDB fran\u00e7ais commun avec \u00e9pisodes et lecteurs multi-providers configurables.",
+        "url": "https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/builds/FrenchHub.cs3",
+        "name": "FrenchHub"
+    }
+]
