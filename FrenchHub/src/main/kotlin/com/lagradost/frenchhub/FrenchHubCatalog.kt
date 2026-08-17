@@ -29,6 +29,7 @@ import com.lagradost.cloudstream3.newTvSeriesSearchResponse
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.frenchhub.frenchmanga.FrenchMangaProvider
 import com.lagradost.nikola.NikolaFrenchStreamProvider
 import com.lagradost.frenchhub.movix.MovixProvider
@@ -345,7 +346,8 @@ class FrenchHubCatalog : MainAPI() {
                                     if (seenSubtitles.add(subtitle.url)) subtitleCallback(subtitle)
                                 },
                                 { link ->
-                                    val pathKey = link.url
+                                    val normalizedLink = normalizeHlsLink(link)
+                                    val pathKey = normalizedLink.url
                                         .substringBefore("?")
                                         .substringBefore("#")
                                         .let { url ->
@@ -358,7 +360,7 @@ class FrenchHubCatalog : MainAPI() {
                                             "$host|$path"
                                         }
                                     if (seenFiles.add(pathKey) &&
-                                        seenLinks.add("${entry.key}|${link.url}")) callback(link)
+                                        seenLinks.add("${entry.key}|${normalizedLink.url}")) callback(normalizedLink)
                                 },
                             )
                         }
@@ -476,6 +478,36 @@ class FrenchHubCatalog : MainAPI() {
             .replace(Regex("""[^a-z0-9]+"""), "")
     }
 
+    /** Normalise le type de tout manifeste HLS détecté dans FrenchHub. */
+    @Suppress("DEPRECATION_ERROR")
+    private fun normalizeHlsLink(link: ExtractorLink): ExtractorLink {
+        val isHls = link.type == ExtractorLinkType.M3U8 ||
+            link.url.contains(".m3u8", ignoreCase = true) ||
+            Regex("""[?&](?:format|type|container)=m3u8(?:&|$)""", RegexOption.IGNORE_CASE)
+                .containsMatchIn(link.url)
+        if (!isHls || link.type == ExtractorLinkType.M3U8) return link
+        return ExtractorLink(
+            source = link.source,
+            name = link.name,
+            url = link.url,
+            referer = link.referer,
+            quality = link.quality,
+            headers = link.headers,
+            extractorData = link.extractorData,
+            type = ExtractorLinkType.M3U8,
+            audioTracks = link.audioTracks,
+        )
+    }
+
+    private fun titleTokens(value: String): List<String> {
+        return java.text.Normalizer.normalize(value.lowercase(Locale.ROOT), java.text.Normalizer.Form.NFD)
+            .replace(Regex("""\p{M}+"""), "")
+            .replace(Regex("""[^a-z0-9]+"""), " ")
+            .trim()
+            .split(Regex("""\s+"""))
+            .filter { it.length >= 3 && it !in setOf("vf", "vff", "vfq", "vo", "vostfr", "multi") }
+    }
+
     /**
      * Comparaison de titres tolérante : égalité exacte des clés, inclusion
      * réciproque des mots principaux (>= 4 caractères), et correspondance
@@ -491,8 +523,8 @@ class FrenchHubCatalog : MainAPI() {
         // Correspondance des mots principaux : tous les mots >= 4 lettres d'un
         // titre doivent être présents dans l'autre.
         val words = { value: String -> value.split(Regex("""[a-z0-9]+"""")).filter { it.length >= 4 } }
-        val wa = words(a)
-        val wb = words(b)
+        val wa = titleTokens(left)
+        val wb = titleTokens(right)
         if (wa.isNotEmpty() && wa.all { it in b }) return true
         if (wb.isNotEmpty() && wb.all { it in a }) return true
         if (wa.isNotEmpty() && wb.isNotEmpty()) {
@@ -516,13 +548,13 @@ class FrenchHubCatalog : MainAPI() {
     ): com.lagradost.cloudstream3.SearchResponse? {
         val targetKeys = listOf(titleKey(title), titleKey(originalTitle))
             .filter(String::isNotEmpty)
-        val targetWords = targetKeys.flatMap { titleKey(it).split(Regex("""[a-z0-9]+""")).filter { w -> w.length >= 4 } }
+        val targetWords = listOf(title, originalTitle).flatMap(::titleTokens)
 
         fun score(name: String): Int {
             val key = titleKey(name)
             if (targetKeys.any { it == key }) return 100
             if (targetKeys.any { it.contains(key) || key.contains(it) }) return 60
-            val words = key.split(Regex("""[a-z0-9]+""")).filter { it.length >= 4 }
+            val words = titleTokens(name)
             if (words.isNotEmpty() && words.all { it in targetKeys.joinToString("") }) return 50
             if (targetWords.isNotEmpty() && words.any { it in targetWords } && words.size >= 2) {
                 return words.count { it in targetWords } * 20

@@ -61,6 +61,7 @@ internal object FrenchStreamQuality {
             .distinctBy { "${it.language.orEmpty()}|${it.link.url}" }
             .sortedWith(
                 compareBy<FrenchStreamResolvedLink> { languagePriority(it.language) }
+                    .thenBy { hlsPriority(it.link) }
                     .thenByDescending { it.link.quality }
                     .thenBy { it.link.source }
             )
@@ -73,5 +74,9 @@ internal object FrenchStreamQuality {
             "VOSTFR", "VO" -> 2
             else -> 3
         }
+    }
+
+    private fun hlsPriority(link: ExtractorLink): Int {
+        return if (link.url.contains(".m3u8", ignoreCase = true)) 0 else 1
     }
 }
