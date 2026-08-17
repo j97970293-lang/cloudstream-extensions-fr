@@ -47,9 +47,19 @@ jobs:
           test -f build/plugins.json
           cp build/plugins.json published/plugins.json
           cp repo.json published/repo.json
+          test -f docs/frenchhub.png
+          cp docs/frenchhub.png published/frenchhub.png
           find . -path '*/build/*.cs3' -type f -exec cp {} published/ \;
           test "$(find published -maxdepth 1 -name '*.cs3' | wc -l)" -gt 0
           find published -maxdepth 1 -type f -printf '%f\n' | sort
+
+      - name: Prepare CDN mirror files
+        run: |
+          rm -rf published-mirror
+          cp -R published published-mirror
+          sed -i 's#https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/builds/#https://cdn.jsdelivr.net/gh/j97970293-lang/cloudstream-extensions-fr@mirror/#g' published-mirror/plugins.json
+          sed -i 's#https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/master/docs/frenchhub.png#https://cdn.jsdelivr.net/gh/j97970293-lang/cloudstream-extensions-fr@mirror/frenchhub.png#g' published-mirror/plugins.json
+          sed -i 's#https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/builds/plugins.json#https://cdn.jsdelivr.net/gh/j97970293-lang/cloudstream-extensions-fr@mirror/plugins.json#g' published-mirror/repo.json
 
       - name: Publish builds branch
         uses: peaceiris/actions-gh-pages@v4
@@ -59,3 +69,12 @@ jobs:
           publish_branch: builds
           force_orphan: true
           commit_message: "Build ${{ github.sha }}"
+
+      - name: Publish CDN mirror branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./published-mirror
+          publish_branch: mirror
+          force_orphan: true
+          commit_message: "Mirror ${{ github.sha }}"
