@@ -1,4 +1,4 @@
-version = 25
+version = 1
 
 plugins {
     id("com.android.library")
@@ -7,11 +7,11 @@ plugins {
 
 cloudstream {
     language = "fr"
-    description = "Catalogue TMDB français commun avec épisodes et lecteurs multi-providers configurables."
+    description = "Providers Nuvio français portés vers CloudStream avec activation individuelle."
     authors = listOf("j97970293-lang")
     status = 1
     tvTypes = listOf("Movie", "TvSeries", "Anime")
-    iconUrl = "https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/master/docs/frenchhub.png"
+    iconUrl = "https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/master/docs/nuviofrench.png"
 }
 
 dependencies {

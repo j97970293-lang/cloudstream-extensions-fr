@@ -1,4 +1,4 @@
-package com.lagradost.frenchhub
+package com.lagradost.nuviofrench
 
 import android.content.Context
 import android.text.InputType
@@ -9,8 +9,8 @@ import android.widget.ScrollView
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 
-internal object FrenchHubSettings {
-    private const val PREFIX = "frenchhub.provider."
+internal object NuvioFrenchSettings {
+    private const val PREFIX = "nuviofrench.provider."
     private const val DOMAIN_PREFIX = PREFIX + "domain."
 
     data class ProviderSpec(val key: String, val label: String)
@@ -95,7 +95,7 @@ internal object FrenchHubSettings {
         }
         val scroll = ScrollView(context).apply { addView(root) }
         AlertDialogBuilder(context)
-            .setTitle("FrenchHub — Providers et domaines")
+            .setTitle("NuvioFrench — Providers et domaines")
             .setView(scroll)
             .setPositiveButton("Enregistrer") { _, _ ->
                 providers.forEachIndexed { index, provider ->

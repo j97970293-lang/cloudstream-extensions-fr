@@ -1,4 +1,4 @@
-package com.lagradost.frenchhub
+package com.lagradost.nuviofrench
 
 import com.lagradost.cloudstream3.AnimeLoadResponse
 import com.lagradost.cloudstream3.DubStatus
@@ -29,9 +29,9 @@ import com.lagradost.cloudstream3.newTvSeriesSearchResponse
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.frenchhub.frenchmanga.FrenchMangaProvider
+import com.lagradost.nuviofrench.frenchmanga.FrenchMangaProvider
 import com.lagradost.nikola.NikolaFrenchStreamProvider
-import com.lagradost.frenchhub.movix.MovixProvider
+import com.lagradost.nuviofrench.movix.MovixProvider
 import com.lagradost.moviebox.MovieBoxProvider
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -44,7 +44,7 @@ import java.text.SimpleDateFormat
 import java.util.Collections
 import java.util.Locale
 
-internal data class FrenchHubMediaData(
+internal data class NuvioFrenchMediaData(
     val tmdbId: Int,
     val type: String,
     val title: String,
@@ -56,7 +56,7 @@ internal data class FrenchHubMediaData(
     val firstAired: String? = null,
 )
 
-class FrenchHubCatalog : MainAPI() {
+class NuvioFrenchCatalog : MainAPI() {
     private data class Entry(val key: String, val label: String, val api: MainAPI)
 
     private val frenchStream = NikolaFrenchStreamProvider()
@@ -84,8 +84,8 @@ class FrenchHubCatalog : MainAPI() {
      * which MainAPI owns a result before it calls load(). The actual network calls
      * happen only against TMDB or the streaming providers below.
      */
-    override var mainUrl = "https://frenchhub.local"
-    override var name = "FrenchHub"
+    override var mainUrl = "https://nuviofrench.local"
+    override var name = "NuvioFrench"
     override var lang = "fr"
     override val hasMainPage = true
     override val hasQuickSearch = true
@@ -101,12 +101,12 @@ class FrenchHubCatalog : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val items = FrenchHubTmdb.catalog(request.data, page).map { card -> card.toSearchResponse() }
+        val items = NuvioFrenchTmdb.catalog(request.data, page).map { card -> card.toSearchResponse() }
         return newHomePageResponse(request.name, items, hasNext = items.isNotEmpty())
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        return FrenchHubTmdb.search(query)
+        return NuvioFrenchTmdb.search(query)
             .distinctBy { "${it.type}:${it.id}" }
             .map { it.toSearchResponse() }
     }
@@ -118,13 +118,13 @@ class FrenchHubCatalog : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         val parts = url.removePrefix(mainUrl).trim('/').split('/')
         if (parts.size < 3 || parts[0] != "catalog") {
-            throw ErrorLoadingException("URL FrenchHub invalide : le catalogue doit utiliser une fiche TMDB")
+            throw ErrorLoadingException("URL NuvioFrench invalide : le catalogue doit utiliser une fiche TMDB")
         }
         val type = parts[1].takeIf { it == "movie" || it == "tv" }
             ?: throw ErrorLoadingException("Type TMDB invalide")
         val tmdbId = parts[2].toIntOrNull()
             ?: throw ErrorLoadingException("ID TMDB invalide")
-        val details = FrenchHubTmdb.details(type, tmdbId)
+        val details = NuvioFrenchTmdb.details(type, tmdbId)
             ?: throw ErrorLoadingException("Fiche TMDB indisponible")
 
         return if (type == "movie") {
@@ -136,20 +136,20 @@ class FrenchHubCatalog : MainAPI() {
 
     private suspend fun loadMovie(id: Int, details: JSONObject): MovieLoadResponse {
         val title = details.optString("title").ifBlank { details.optString("original_title") }
-        val imdbId = FrenchHubTmdb.externalId(details, "imdb_id")
-        val data = FrenchHubMediaData(
+        val imdbId = NuvioFrenchTmdb.externalId(details, "imdb_id")
+        val data = NuvioFrenchMediaData(
             tmdbId = id,
             type = "movie",
             title = title,
             originalTitle = details.optString("original_title").takeIf { it.isNotBlank() && it != title },
             imdbId = imdbId,
-            year = FrenchHubTmdb.year(details.optString("release_date")),
+            year = NuvioFrenchTmdb.year(details.optString("release_date")),
         ).toJson()
         val response = newMovieLoadResponse(title, catalogUrl("movie", id), TvType.Movie, data) {
-            posterUrl = FrenchHubTmdb.image(details.optString("poster_path"))
-            backgroundPosterUrl = FrenchHubTmdb.image(details.optString("backdrop_path"), "original")
+            posterUrl = NuvioFrenchTmdb.image(details.optString("poster_path"))
+            backgroundPosterUrl = NuvioFrenchTmdb.image(details.optString("backdrop_path"), "original")
             plot = details.optString("overview").takeIf { it.isNotBlank() }
-            year = FrenchHubTmdb.year(details.optString("release_date"))
+            year = NuvioFrenchTmdb.year(details.optString("release_date"))
             tags = jsonNames(details.optJSONArray("genres"))
             score = details.optDouble("vote_average").takeIf { it > 0.0 }?.let { com.lagradost.cloudstream3.Score.from10(it) }
             duration = details.optInt("runtime").takeIf { it > 0 }
@@ -162,7 +162,7 @@ class FrenchHubCatalog : MainAPI() {
 
     private suspend fun loadSeries(id: Int, details: JSONObject): LoadResponse {
         val title = details.optString("name").ifBlank { details.optString("original_name") }
-        val imdbId = FrenchHubTmdb.externalId(details, "imdb_id")
+        val imdbId = NuvioFrenchTmdb.externalId(details, "imdb_id")
         val seasonNumbers = details.optJSONArray("seasons")
             ?.toJsonObjects()
             ?.mapNotNull { it.optInt("season_number").takeIf { number -> number > 0 } }
@@ -205,10 +205,10 @@ class FrenchHubCatalog : MainAPI() {
         imdbId: String?,
         originalTitle: String? = null,
     ): List<Episode> {
-        val json = FrenchHubTmdb.season(id, season) ?: return emptyList()
+        val json = NuvioFrenchTmdb.season(id, season) ?: return emptyList()
         return json.optJSONArray("episodes")?.toJsonObjects()?.mapNotNull { item ->
             val number = item.optInt("episode_number").takeIf { it > 0 } ?: return@mapNotNull null
-            val data = FrenchHubMediaData(
+            val data = NuvioFrenchMediaData(
                 tmdbId = id,
                 type = "tv",
                 title = title,
@@ -223,7 +223,7 @@ class FrenchHubCatalog : MainAPI() {
                 this.season = season
                 this.episode = number
                 description = item.optString("overview").takeIf { it.isNotBlank() }
-                posterUrl = FrenchHubTmdb.image(item.optString("still_path"))
+                posterUrl = NuvioFrenchTmdb.image(item.optString("still_path"))
                 score = item.optDouble("vote_average").takeIf { it > 0.0 }?.let { com.lagradost.cloudstream3.Score.from10(it) }
                 date = parseDate(item.optString("air_date"))
             }
@@ -231,10 +231,10 @@ class FrenchHubCatalog : MainAPI() {
     }
 
     private suspend fun TvSeriesLoadResponse.applySeriesMetadata(details: JSONObject, id: Int, imdbId: String?) {
-        posterUrl = FrenchHubTmdb.image(details.optString("poster_path"))
-        backgroundPosterUrl = FrenchHubTmdb.image(details.optString("backdrop_path"), "original")
+        posterUrl = NuvioFrenchTmdb.image(details.optString("poster_path"))
+        backgroundPosterUrl = NuvioFrenchTmdb.image(details.optString("backdrop_path"), "original")
         plot = details.optString("overview").takeIf { it.isNotBlank() }
-        year = FrenchHubTmdb.year(details.optString("first_air_date"))
+        year = NuvioFrenchTmdb.year(details.optString("first_air_date"))
         tags = jsonNames(details.optJSONArray("genres"))
         score = details.optDouble("vote_average").takeIf { it > 0.0 }?.let { com.lagradost.cloudstream3.Score.from10(it) }
         addImdbId(imdbId)
@@ -243,10 +243,10 @@ class FrenchHubCatalog : MainAPI() {
     }
 
     private suspend fun AnimeLoadResponse.applySeriesMetadata(details: JSONObject, id: Int, imdbId: String?) {
-        posterUrl = FrenchHubTmdb.image(details.optString("poster_path"))
-        backgroundPosterUrl = FrenchHubTmdb.image(details.optString("backdrop_path"), "original")
+        posterUrl = NuvioFrenchTmdb.image(details.optString("poster_path"))
+        backgroundPosterUrl = NuvioFrenchTmdb.image(details.optString("backdrop_path"), "original")
         plot = details.optString("overview").takeIf { it.isNotBlank() }
-        year = FrenchHubTmdb.year(details.optString("first_air_date"))
+        year = NuvioFrenchTmdb.year(details.optString("first_air_date"))
         tags = jsonNames(details.optJSONArray("genres"))
         score = details.optDouble("vote_average").takeIf { it > 0.0 }?.let { com.lagradost.cloudstream3.Score.from10(it) }
         addImdbId(imdbId)
@@ -258,7 +258,7 @@ class FrenchHubCatalog : MainAPI() {
      * Complète la fiche avec le casting (15 acteurs principaux de TMDB) et la
      * bande-annonce officielle (vidéo YouTube « Trailer » ou « Teaser »).
      * La fiche TMDB est déjà demandée avec credits et videos via
-     * FrenchHubTmdb.details (append_to_response).
+     * NuvioFrenchTmdb.details (append_to_response).
      */
     private suspend fun LoadResponse.applyTmdbExtras(details: JSONObject) {
         details.optJSONObject("credits")?.optJSONArray("cast")?.let { cast ->
@@ -271,7 +271,7 @@ class FrenchHubCatalog : MainAPI() {
                     val character = actor.optString("character").ifBlank { actor.optString("known_for_department") }
                     com.lagradost.cloudstream3.Actor(
                         name,
-                        FrenchHubTmdb.image(actor.optString("profile_path"), "w185"),
+                        NuvioFrenchTmdb.image(actor.optString("profile_path"), "w185"),
                     ) to character
                 }
             if (actors.isNotEmpty()) addActors(actors)
@@ -295,15 +295,15 @@ class FrenchHubCatalog : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val media = tryParseJson<FrenchHubMediaData>(data) ?: return false
+        val media = tryParseJson<NuvioFrenchMediaData>(data) ?: return false
         // Les domaines sont modifiables depuis le menu de l'extension ; on les
         // réapplique ici afin qu'un changement soit pris en compte sans recréer
         // l'objet provider.
-        frenchStream.mainUrl = FrenchHubSettings.domain("frenchstream")
-        movix.mainUrl = FrenchHubSettings.domain("movix")
-        frenchManga.mainUrl = FrenchHubSettings.domain("frenchmanga")
-        movieBox.mainUrl = FrenchHubSettings.domain("moviebox")
-        FrenchHubSettings.apiMainUrls.forEach { (key, url) ->
+        frenchStream.mainUrl = NuvioFrenchSettings.domain("frenchstream")
+        movix.mainUrl = NuvioFrenchSettings.domain("movix")
+        frenchManga.mainUrl = NuvioFrenchSettings.domain("frenchmanga")
+        movieBox.mainUrl = NuvioFrenchSettings.domain("moviebox")
+        NuvioFrenchSettings.apiMainUrls.forEach { (key, url) ->
             providerByKey[key]?.api?.mainUrl = url
         }
         // Les sous-providers (FStream, Movix, Wiflix, …) partagent souvent les mêmes
@@ -320,9 +320,9 @@ class FrenchHubCatalog : MainAPI() {
         // Si tous les providers ont été désactivés (menu Providers), aucun lecteur
         // ne pourrait s'afficher : dans ce cas, réactiver la configuration par
         // défaut afin de ne jamais laisser l'utilisateur sans aucun lecteur.
-        var active = providers.filter { FrenchHubSettings.isEnabled(it.key) }
+        var active = providers.filter { NuvioFrenchSettings.isEnabled(it.key) }
         if (active.isEmpty()) {
-            providers.forEach { FrenchHubSettings.setEnabled(it.key, true) }
+            providers.forEach { NuvioFrenchSettings.setEnabled(it.key, true) }
             active = providers
         }
 
@@ -372,7 +372,7 @@ class FrenchHubCatalog : MainAPI() {
         return true
     }
 
-    private fun directProviderData(entry: Entry, media: FrenchHubMediaData): String? {
+    private fun directProviderData(entry: Entry, media: NuvioFrenchMediaData): String? {
         return when (entry.key) {
             "moviebox" -> {
                 val subjectTitle = media.title
@@ -406,7 +406,7 @@ class FrenchHubCatalog : MainAPI() {
         }
     }
 
-    private suspend fun searchProviderData(entry: Entry, media: FrenchHubMediaData): String? {
+    private suspend fun searchProviderData(entry: Entry, media: NuvioFrenchMediaData): String? {
         if (entry.api.supportedTypes.none { type ->
                 if (media.type == "movie") type == TvType.Movie else type == TvType.TvSeries || type == TvType.Anime
             }) return null
@@ -444,18 +444,18 @@ class FrenchHubCatalog : MainAPI() {
         }
     }
 
-    private fun FrenchHubTmdbCard.toSearchResponse(): SearchResponse {
+    private fun NuvioFrenchTmdbCard.toSearchResponse(): SearchResponse {
         val url = catalogUrl(type = if (type == "tv") "tv" else "movie", id = id)
         return if (type == "tv") {
             newTvSeriesSearchResponse(title, url, TvType.TvSeries, fix = false) {
-                posterUrl = FrenchHubTmdb.image(posterPath)
+                posterUrl = NuvioFrenchTmdb.image(posterPath)
                 year = this@toSearchResponse.year
                 this.id = this@toSearchResponse.id
                 score = this@toSearchResponse.score?.let { com.lagradost.cloudstream3.Score.from10(it) }
             }
         } else {
             newMovieSearchResponse(title, url, TvType.Movie, fix = false) {
-                posterUrl = FrenchHubTmdb.image(posterPath)
+                posterUrl = NuvioFrenchTmdb.image(posterPath)
                 year = this@toSearchResponse.year
                 this.id = this@toSearchResponse.id
                 score = this@toSearchResponse.score?.let { com.lagradost.cloudstream3.Score.from10(it) }
