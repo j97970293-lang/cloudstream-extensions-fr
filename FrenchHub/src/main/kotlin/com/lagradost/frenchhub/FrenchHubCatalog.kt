@@ -31,7 +31,7 @@ import com.lagradost.frenchhub.dotriv.DoTriv
 import com.lagradost.frenchhub.animesama.AnimeSamaProvider
 import com.lagradost.frenchhub.frenchanime.FrenchAnime
 import com.lagradost.frenchhub.frenchmanga.FrenchMangaProvider
-import com.lagradost.frenchhub.frenchstream.FrenchStreamProvider
+import com.lagradost.nikola.NikolaFrenchStreamProvider
 import com.lagradost.frenchhub.frembed.Frembed
 import com.lagradost.frenchhub.fsmirror.FsMirrorLol
 import com.lagradost.frenchhub.jourfilm.JourFilm
@@ -65,7 +65,10 @@ class FrenchHubCatalog : MainAPI() {
     private data class Entry(val key: String, val label: String, val api: MainAPI)
 
     private val providers = listOf(
-        Entry("frenchstream", "French-Stream", FrenchStreamProvider()),
+        // Provider Nikola (Nikola17/cloudstream-frenchstream) : recherche directe
+        // sur french-stream.one + matching TMDB robuste, éprouvé sur de nombreuses
+        // fiches. Les lecteurs sont chargés en parallèle avec les autres sources.
+        Entry("frenchstream", "French-Stream", NikolaFrenchStreamProvider()),
         Entry("movix", "Movix", MovixProvider()),
         Entry("frenchmanga", "French-Manga", FrenchMangaProvider()),
         Entry("wiflix", "Wiflix", WiflixProvider()),
@@ -344,17 +347,24 @@ class FrenchHubCatalog : MainAPI() {
                 if (media.type == "movie") type == TvType.Movie else type == TvType.TvSeries || type == TvType.Anime
             }) return null
 
-        val results = entry.api.search(media.title).orEmpty()
+        var results = entry.api.search(media.title).orEmpty()
             .filter { result ->
                 if (media.type == "movie") result.type == TvType.Movie
                 else result.type == TvType.TvSeries || result.type == TvType.Anime
             }
-        // Matching multi-critères (titre français, titre original, mots clés,
-        // similarTitle en dernier recours) : les sites renomment parfois les
-        // fiches (« Le Cas Oppenheimer » ↔ « Oppenheimer »), la comparaison
-        // exacte rate trop de correspondances valides.
-        val candidate = tmdbMatch(results, media.title, media.originalTitle.orEmpty(), media.year)
-            ?: results.firstOrNull { result -> similarTitle(result.name, media.title) }
+        // Les cartes Nikola sont enrichies avec leur ID TMDB (enrichCards) :
+        // une correspondance exacte sur l'ID TMDB est le match parfait, sans
+        // ambiguïté possible sur le titre ou l'année.
+        val candidate = results.firstOrNull { result -> result.id == media.tmdbId }
+            ?: run {
+                // Matching multi-critères (titre français, titre original,
+                // mots clés, similarTitle en dernier recours) : les sites
+                // renomment parfois les fiches (« Le Cas Oppenheimer » ↔
+                // « Oppenheimer »), la comparaison exacte rate trop de
+                // correspondances valides.
+                tmdbMatch(results, media.title, media.originalTitle.orEmpty(), media.year)
+                    ?: results.firstOrNull { result -> similarTitle(result.name, media.title) }
+            }
             ?: return null
         val loaded = entry.api.load(candidate.url) ?: return null
         return when (loaded) {
