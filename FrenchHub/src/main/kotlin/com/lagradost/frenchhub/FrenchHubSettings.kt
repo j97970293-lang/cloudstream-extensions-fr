@@ -25,6 +25,8 @@ internal object FrenchHubSettings {
 
     fun isEnabled(key: String): Boolean = getKey<Boolean>(PREFIX + key) ?: true
 
+    fun setEnabled(key: String, enabled: Boolean) = setKey(PREFIX + key, enabled)
+
     fun show(context: Context, onSaved: () -> Unit) {
         val checked = providers.map { isEnabled(it.key) }.toBooleanArray()
         AlertDialog.Builder(context)

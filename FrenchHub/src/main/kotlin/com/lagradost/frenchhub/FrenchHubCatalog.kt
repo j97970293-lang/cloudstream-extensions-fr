@@ -159,6 +159,20 @@ class FrenchHubCatalog : MainAPI() {
             ?.toJsonObjects()
             ?.mapNotNull { it.optInt("season_number").takeIf { number -> number > 0 } }
             .orEmpty()
+        // Épisodes déjà présents sur French-Stream : le site fournit leurs
+        // lecteurs préchargés, ils se lancent instantanément sans recherche.
+        val covered = (providerByKey["frenchstream"]?.api as? NikolaFrenchStreamProvider)
+            ?.takeIf { FrenchHubSettings.isEnabled("frenchstream") }
+            ?.let { niko ->
+                runCatching {
+                    niko.coveredEpisodes(
+                        title,
+                        FrenchHubTmdb.year(details.optString("first_air_date")),
+                        seasonNumbers,
+                    )
+                }.getOrNull().orEmpty()
+            }
+            .orEmpty()
         val episodes = coroutineScope {
             seasonNumbers.chunked(4).flatMap { batch ->
                 batch.map { season ->
@@ -169,6 +183,7 @@ class FrenchHubCatalog : MainAPI() {
                             title,
                             imdbId,
                             details.optString("original_name").takeIf { it.isNotBlank() && it != title },
+                            covered,
                         )
                     }
                 }.awaitAll().flatten()
@@ -196,12 +211,13 @@ class FrenchHubCatalog : MainAPI() {
         title: String,
         imdbId: String?,
         originalTitle: String? = null,
+        covered: Map<Pair<Int, Int>, String> = emptyMap(),
     ): List<Episode> {
         val json = FrenchHubTmdb.season(id, season) ?: return emptyList()
         return json.optJSONArray("episodes")?.toJsonObjects()?.mapNotNull { item ->
             val number = item.optInt("episode_number").takeIf { it > 0 } ?: return@mapNotNull null
-            newEpisode(
-                FrenchHubMediaData(
+            val data = covered[season to number]
+                ?: FrenchHubMediaData(
                     tmdbId = id,
                     type = "tv",
                     title = title,
@@ -210,8 +226,8 @@ class FrenchHubCatalog : MainAPI() {
                     season = season,
                     episode = number,
                     firstAired = item.optString("air_date").takeIf { it.isNotBlank() },
-                )
-            ) {
+                ).toJson()
+            newEpisode(data) {
                 name = item.optString("name").ifBlank { "Épisode $number" }
                 this.season = season
                 this.episode = number
@@ -258,7 +274,14 @@ class FrenchHubCatalog : MainAPI() {
         // masque tous les lecteurs des autres sources.
         val seenLinks = Collections.synchronizedSet(mutableSetOf<String>())
         val seenSubtitles = Collections.synchronizedSet(mutableSetOf<String>())
-        val active = providers.filter { FrenchHubSettings.isEnabled(it.key) }
+        // Si tous les providers ont été désactivés (menu Providers), aucun lecteur
+        // ne pourrait s'afficher : dans ce cas, réactiver la configuration par
+        // défaut afin de ne jamais laisser l'utilisateur sans aucun lecteur.
+        var active = providers.filter { FrenchHubSettings.isEnabled(it.key) }
+        if (active.isEmpty()) {
+            providers.forEach { FrenchHubSettings.setEnabled(it.key, true) }
+            active = providers
+        }
 
         // Chargement non bloquant : chaque provider tourne en parallèle et émet
         // ses lecteurs et sous-titres AUSSI TÔT qu'ils sont disponibles.
