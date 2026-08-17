@@ -4,6 +4,16 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal object MovixLinkParser {
+
+    /** Lien avec sa langue d'origine (clé du groupe de lecteurs de l'API Movix). */
+    data class LabeledLink(val url: String, val language: String)
+
+    private fun languageForGroup(group: String): String = when (group) {
+        "VFQ", "VFF", "VF", "vf" -> "VF"
+        "VOSTFR", "vostfr" -> "VOSTFR"
+        "vo" -> "VO"
+        else -> "VO"
+    }
     private val preferredGroups = listOf(
         "VFQ",
         "VFF",
@@ -27,6 +37,39 @@ internal object MovixLinkParser {
             ?.optJSONObject(episode.toString())
             ?.optJSONObject("languages")
         return linksFromGroups(languages)
+    }
+
+    /**
+     * Variante étiquetée : chaque lien est associé à la langue de son groupe
+     * de lecteurs (VFQ/VFF=VF, VOSTFR=VOSTFR, Default/autre=VO). Utilisé par
+     * MovixProvider pour afficher [VF] ou [VOSTFR] dans le nom du lecteur.
+     */
+    fun fstreamMovieLabeled(root: JSONObject): List<LabeledLink> {
+        return labeledFromGroups(
+            root.optJSONObject("players"),
+            listOf("VFQ", "VFF", "VOSTFR", "Default")
+        )
+    }
+
+    fun fstreamTvLabeled(root: JSONObject, episode: Int): List<LabeledLink> {
+        val languages = root.optJSONObject("episodes")
+            ?.optJSONObject(episode.toString())
+            ?.optJSONObject("languages")
+        return labeledFromGroups(languages)
+    }
+
+    private fun labeledFromGroups(
+        groups: JSONObject?,
+        requestedGroups: List<String>? = null,
+    ): List<LabeledLink> {
+        if (groups == null) return emptyList()
+
+        val available = groups.keys().asSequence().toList()
+        val groupNames = requestedGroups ?: (preferredGroups.filter { it in available } + available.filterNot { it in preferredGroups })
+
+        return groupNames.map { group ->
+            linksFromArray(groups.optJSONArray(group)).map { LabeledLink(it, languageForGroup(group)) }
+        }.flatten().distinctBy { it.url }
     }
 
     fun customMovie(root: JSONObject): List<String> {

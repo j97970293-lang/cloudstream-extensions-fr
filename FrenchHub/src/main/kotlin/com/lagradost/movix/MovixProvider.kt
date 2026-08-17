@@ -464,6 +464,16 @@ class MovixProvider : MainAPI() {
             emptyList()
         }
 
+        // Variante étiquetée : la clé du groupe de lecteurs Movix (VFQ/VFF=
+        // VF, VOSTFR) est conservée pour préfixer le nom des lecteurs.
+        val primaryLabeled = if (type == "tv" && season != null && episode != null) {
+            fstreamTvLinksLabeled(id, season, episode)
+        } else if (type == "movie") {
+            fstreamMovieLinksLabeled(id)
+        } else {
+            emptyList()
+        }
+
         val fallbackLinks = if (type == "tv" && season != null && episode != null) {
             wiflixTvLinks(id, season, episode) + imdbTvLinks(id, season, episode)
         } else if (type == "movie") {
@@ -483,7 +493,7 @@ class MovixProvider : MainAPI() {
                     }
                 }
             }
-            launch { runCatching { loadExtractorLinks(primaryLinks, subtitleCallback, callback, "FStream") } }
+            launch { runCatching { loadLabeledExtractorLinks(primaryLabeled, subtitleCallback, callback, "FStream") } }
             launch { runCatching { loadExtractorLinks(fallbackLinks, subtitleCallback, callback, "Wiflix") } }
         }
 
@@ -596,6 +606,47 @@ class MovixProvider : MainAPI() {
         )
     }
 
+    /**
+     * Sondage des liens étiquetés (FStream Movix) : la langue du groupe de
+     * lecteurs (VFQ/VFF → [VF], VOSTFR → [VOSTFR], Default → [VO]) est
+     * reportée dans le nom du lecteur pour qu'elle soit visible.
+     */
+    private suspend fun loadLabeledExtractorLinks(
+        links: List<MovixLinkParser.LabeledLink>,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+        label: String = ""
+    ): Boolean {
+        return MovixExtractorPipeline.load(
+            links = links.filterNot { isFakeLink(it.url) }.map { it.url },
+            loader = { link, emit ->
+                val language = links.firstOrNull { it.url == link }?.language ?: "VO"
+                loadExtractor(link, subtitleCallback) { emitted ->
+                    val suffix = label.takeIf { it.isNotBlank() }
+                        ?.let { " [$it]" } ?: ""
+                    val languageSuffix = when (language) {
+                        "VF" -> " [VF]"
+                        "VOSTFR" -> " [VOSTFR]"
+                        else -> ""
+                    }
+                    @Suppress("DEPRECATION_ERROR")
+                    emit(
+                        ExtractorLink(
+                            source = emitted.source,
+                            name = "${emitted.name}$languageSuffix$suffix",
+                            url = emitted.url,
+                            referer = emitted.referer,
+                            quality = emitted.quality,
+                            headers = emitted.headers,
+                            type = emitted.type
+                        )
+                    )
+                }
+            },
+            callback = callback
+        )
+    }
+
     private suspend fun getMovixApi(path: String, timeoutSeconds: Long = 20L): JSONObject? {
         return runCatching {
             for (apiBase in apiMirrors) {
@@ -658,6 +709,18 @@ class MovixProvider : MainAPI() {
     private suspend fun fstreamTvLinks(id: Int, season: Int, episode: Int): List<String> {
         return getMovixApi("api/fstream/tv/$id/season/$season")
             ?.let { MovixLinkParser.fstreamTv(it, episode) }
+            ?: emptyList()
+    }
+
+    private suspend fun fstreamMovieLinksLabeled(id: Int): List<MovixLinkParser.LabeledLink> {
+        return getMovixApi("api/fstream/movie/$id")
+            ?.let(MovixLinkParser::fstreamMovieLabeled)
+            ?: emptyList()
+    }
+
+    private suspend fun fstreamTvLinksLabeled(id: Int, season: Int, episode: Int): List<MovixLinkParser.LabeledLink> {
+        return getMovixApi("api/fstream/tv/$id/season/$season")
+            ?.let { MovixLinkParser.fstreamTvLabeled(it, episode) }
             ?: emptyList()
     }
 

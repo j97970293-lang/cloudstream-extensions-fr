@@ -2,17 +2,22 @@ package com.lagradost.moviebox
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.Qualities
 import org.json.JSONObject
 
 /**
  * Source MovieBox, reprise à l'identique de l'implémentation invokeMoviebox de
  * CineStream (SaurabhKaperwan/CSX) : API h5-api.aoneroom.com avec jeton x-user,
- * recherche par sujet, endpoints /subject/download et /subject/play. Seule
- * différence : les lecteurs dont la langue n'est pas française (VF, VOSTFR,
- * VFF, Multi) sont écartés, y compris les sous-titres non français.
+ * recherche par sujet, endpoints /subject/download et /subject/play.
+ *
+ * Différences avec CSX d'origine :
+ * - Tous les sujets trouvés sont conservés au niveau du matching (y compris
+ *   ceux sans tag de langue), c'est-à-dire « tout MovieBox ».
+ * - Les lecteurs dont la langue est CONNUE et non française (Hindi, Anglais,
+ *   Version anglaise…) sont écartés ; ceux sans tag (Original) sont conservés
+ *   car leur piste audio est indéterminée. Le tag entre crochets du titre
+ *   ([VF], [VOSTFR], [VFF], [Multi], [Version française]) détermine la langue
+ *   et est reporté dans le nom du lecteur.
  */
 class MovieBoxProvider : MainAPI() {
     override var mainUrl = "https://h5-api.aoneroom.com"
@@ -25,7 +30,11 @@ class MovieBoxProvider : MainAPI() {
     private val baseUrl get() = mainUrl.trimEnd('/')
     private val seasonSuffixRegex = Regex("""\sS\d+(?:-S?\d+)*$""", RegexOption.IGNORE_CASE)
 
-    private val frenchLanguages = setOf("VF", "VOSTFR", "VFF", "MULTI", "FRENCH")
+    /** Langues françaises reconnues dans les tags de titres MovieBox. */
+    private val frenchLanguages = setOf("VF", "VOSTFR", "VFF", "MULTI", "VERSION FRANÇAISE", "FRENCH")
+
+    /** Langues explicitement NON françaises : leurs lecteurs sont supprimés. */
+    private val nonFrenchLanguages = setOf("HINDI", "VERSION ANGLAISE", "ENGLISH", "ANGLO")
 
     override suspend fun search(query: String): List<SearchResponse> = emptyList()
 
@@ -61,7 +70,7 @@ class MovieBoxProvider : MainAPI() {
             )
         }.getOrNull() ?: return false
 
-        val items = unwrap(searchObj).optJSONArray("items") ?: return false
+        val items = searchObj.optJSONObject("data")?.optJSONArray("items") ?: return false
         val titleMatchRegex = Regex(
             "^${Regex.escape(title)}(?:\\s+\\[([^\\]]+)])?$",
             RegexOption.IGNORE_CASE,
@@ -77,15 +86,15 @@ class MovieBoxProvider : MainAPI() {
             subjectsById.putIfAbsent(id, language)
         }
 
-        // Les seuls contenus conservés sont ceux en AUDIO FRANÇAIS : VF, VOSTFR,
-        // VFF ou Multi. Tout le reste (Original, Anglais, etc.) est écarté.
-        val frenchSubjects = subjectsById.filter { (_, language) ->
-            language.uppercase() in frenchLanguages
+        // Les contenus explicitement non français sont écartés ; tout le reste
+        // (VF, VOSTFR, VFF, Multi, Original…) est conservé.
+        val keptSubjects = subjectsById.filter { (_, language) ->
+            language.uppercase() !in nonFrenchLanguages
         }
 
-        if (frenchSubjects.isEmpty()) return false
+        if (keptSubjects.isEmpty()) return false
 
-        frenchSubjects.forEach { (subjectId, language) ->
+        keptSubjects.forEach { (subjectId, language) ->
             runCatching {
                 val detailObj = runCatching {
                     JSONObject(
@@ -115,13 +124,19 @@ class MovieBoxProvider : MainAPI() {
                 )
 
                 val downloadObj = runCatching {
-                    unwrap(JSONObject(app.get("$baseUrl/wefeed-h5api-bff/subject/download?$params", headers = playHeaders).text))
+                    JSONObject(
+                        app.get("$baseUrl/wefeed-h5api-bff/subject/download?$params", headers = playHeaders)
+                            .text,
+                    ).optJSONObject("data") ?: JSONObject()
                 }.getOrNull() ?: JSONObject()
                 val playObj = runCatching {
-                    unwrap(JSONObject(app.get("$baseUrl/wefeed-h5api-bff/subject/play?$params", headers = playHeaders).text))
+                    JSONObject(
+                        app.get("$baseUrl/wefeed-h5api-bff/subject/play?$params", headers = playHeaders)
+                            .text,
+                    ).optJSONObject("data") ?: JSONObject()
                 }.getOrNull() ?: JSONObject()
 
-                val displayName = "MovieBox [$language]"
+                val displayName = buildName(language)
                 val addedQualities = mutableSetOf<Int>()
 
                 downloadObj.optJSONArray("downloads")?.let { array ->
@@ -197,6 +212,16 @@ class MovieBoxProvider : MainAPI() {
         return true
     }
 
+    /** Construit le nom affiché du lecteur, en français lisible. */
+    private fun buildName(language: String): String {
+        val tag = when (language.uppercase()) {
+            "VERSION FRANÇAISE" -> "VF"
+            "ORIGINAL" -> "Original"
+            else -> language.uppercase()
+        }
+        return "MovieBox [$tag]"
+    }
+
     /** Récupère le jeton d'API MovieBox via le header x-user du point d'entrée des paquets. */
     private suspend fun fetchToken(): String? = runCatching {
         val xUser = app.get("$baseUrl/wefeed-h5api-bff/app/get-latest-app-pkgs?app_name=moviebox")
@@ -204,21 +229,19 @@ class MovieBoxProvider : MainAPI() {
         JSONObject(xUser ?: return null).optString("token").takeIf(String::isNotBlank)
     }.getOrNull()
 
+    /**
+     * Headers de base — sans Host personnalisé : le point de terminaison
+     * h5.aoneroom.com rejette (404) les requêtes portant ce Host alternatif.
+     */
     private fun baseHeaders(token: String): Map<String, String> = mapOf(
         "X-Client-Info" to """{"timezone":"Africa/Nairobi"}""",
         "Accept-Language" to "en-US,en;q=0.5",
         "Accept" to "application/json",
         "Referer" to baseUrl,
-        "Host" to "h5-api.aoneroom.com",
         "Connection" to "keep-alive",
         "Authorization" to "Bearer $token",
         "User-Agent" to "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
     )
-
-    private fun unwrap(json: JSONObject): JSONObject {
-        val data = json.optJSONObject("data") ?: return json
-        return data.optJSONObject("data") ?: data
-    }
 
     /** Accepte le français sous toutes ses formes usuelles dans les sous-titres. */
     private fun isFrenchLanguage(language: String): Boolean {
