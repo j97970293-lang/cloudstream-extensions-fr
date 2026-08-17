@@ -252,16 +252,13 @@ class MovieBoxProvider : MainAPI() {
                     }
                 }
 
-                // Sous-titres : seuls ceux en français sont conservés.
-                downloadObj.optJSONArray("captions")?.let { array ->
-                    (0 until array.length()).mapNotNull { array.optJSONObject(it) }.forEach { caption ->
-                        val url = caption.optString("url").takeIf(String::isNotBlank) ?: return@forEach
-                        val languageName = caption.optString("lanName").ifBlank { caption.optString("lan") }
-                        if (languageName.isNotBlank() && isFrenchLanguage(languageName)) {
-                            subtitleCallback(SubtitleFile(languageName, url))
-                        }
-                    }
-                }
+                // MovieBox n’emploie pas toujours le même conteneur : selon le
+                // serveur, les pistes arrivent dans captions, subtitles ou
+                // tracks, parfois dans la réponse play plutôt que download.
+                // Toutes les pistes françaises ou anglaises sont désormais
+                // remontées sans modifier le filtre audio français des lecteurs.
+                downloadObj.emitSubtitles(subtitleCallback)
+                playObj.emitSubtitles(subtitleCallback)
             }
         }
         return true
@@ -389,10 +386,38 @@ class MovieBoxProvider : MainAPI() {
         "User-Agent" to "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
     )
 
+    private fun JSONObject.emitSubtitles(callback: (SubtitleFile) -> Unit) {
+        val roots = listOf(this, optJSONObject("data")).filterNotNull()
+        val emitted = mutableSetOf<String>()
+        roots.forEach { root ->
+            listOf("captions", "subtitles", "subtitle", "tracks").forEach { key ->
+                val tracks = root.optJSONArray(key) ?: return@forEach
+                (0 until tracks.length()).mapNotNull { tracks.optJSONObject(it) }.forEach { track ->
+                    val url = sequenceOf("url", "file", "src")
+                        .map { track.optString(it) }
+                        .firstOrNull { it.startsWith("http") } ?: return@forEach
+                    val language = sequenceOf("lanName", "lan", "language", "label")
+                        .map { track.optString(it) }
+                        .firstOrNull(String::isNotBlank) ?: return@forEach
+                    if (isSupportedSubtitleLanguage(language) && emitted.add(url)) {
+                        val tag = if (isFrenchLanguage(language)) "FR" else "EN"
+                        callback(SubtitleFile("$tag — $language", url))
+                    }
+                }
+            }
+        }
+    }
+
     /** Accepte le français sous toutes ses formes usuelles dans les sous-titres. */
     private fun isFrenchLanguage(language: String): Boolean {
         val normalized = language.uppercase()
         return "FR" in normalized || "FRENCH" in normalized || "VF" in normalized ||
             "VOSTFR" in normalized || "MULTI" in normalized
+    }
+
+    private fun isSupportedSubtitleLanguage(language: String): Boolean {
+        val normalized = language.uppercase()
+        return isFrenchLanguage(normalized) || "EN" in normalized || "ENGLISH" in normalized ||
+            "ANGLAIS" in normalized
     }
 }

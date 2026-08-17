@@ -101,7 +101,7 @@ class FrenchMangaProvider : MainAPI() {
 
         var emitted = false
         episode.sources.forEach { source ->
-            if (loadSource(source, payload.pageUrl, callback)) {
+            if (loadSource(source, payload.pageUrl, subtitleCallback, callback)) {
                 emitted = true
             } else {
                 runCatching {
@@ -229,11 +229,17 @@ class FrenchMangaProvider : MainAPI() {
     private suspend fun loadSource(
         source: FrenchMangaSource,
         pageUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val response = runCatching {
             app.get(source.url, headers = browserHeaders, referer = pageUrl, timeout = 10L)
         }.getOrNull() ?: return false
+        response.document.select("track[src]").forEach { track ->
+            val subtitleUrl = track.attr("abs:src").takeIf(String::isNotBlank) ?: return@forEach
+            val label = track.attr("label").ifBlank { track.attr("srclang") }.ifBlank { "Sous-titres" }
+            subtitleCallback(SubtitleFile(label, subtitleUrl))
+        }
         val mediaUrls = FrenchMangaPackedPlayerParser.extractMediaUrls(response.text)
         mediaUrls.forEach { mediaUrl ->
             val sourceOrigin = origin(source.url)

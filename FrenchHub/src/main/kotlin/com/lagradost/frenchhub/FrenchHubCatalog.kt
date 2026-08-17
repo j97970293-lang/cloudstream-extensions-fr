@@ -420,18 +420,32 @@ class FrenchHubCatalog : MainAPI() {
                 if (media.type == "movie") result.type == TvType.Movie
                 else result.type == TvType.TvSeries || result.type == TvType.Anime
             }
+        // AniZone indexe principalement avec le titre original/anglais. Le
+        // catalogue TMDB de FrenchHub présente souvent le titre français : on
+        // essaie donc explicitement le titre original quand le premier appel
+        // ne retourne aucun candidat exploitable.
+        if (entry.key == "anizone" && results.isEmpty() && media.originalTitle?.isNotBlank() == true &&
+            !media.originalTitle.equals(media.title, true)
+        ) {
+            results = entry.api.search(media.originalTitle).orEmpty()
+                .filter { it.type == TvType.TvSeries || it.type == TvType.Anime }
+        }
         // Les cartes Nikola sont enrichies avec leur ID TMDB (enrichCards) :
         // une correspondance exacte sur l'ID TMDB est le match parfait, sans
         // ambiguïté possible sur le titre ou l'année.
-        val candidate = results.firstOrNull { result -> result.id == media.tmdbId }
+        val seasonResults = if (entry.key == "anizone" && media.season != null) {
+            val marker = Regex("""(?i)(?:season|saison|s)\s*${media.season}(?:\b|$)""")
+            results.filter { marker.containsMatchIn(it.name) }.ifEmpty { results }
+        } else results
+        val candidate = seasonResults.firstOrNull { result -> result.id == media.tmdbId }
             ?: run {
                 // Matching multi-critères (titre français, titre original,
                 // mots clés, similarTitle en dernier recours) : les sites
                 // renomment parfois les fiches (« Le Cas Oppenheimer » ↔
                 // « Oppenheimer »), la comparaison exacte rate trop de
                 // correspondances valides.
-                tmdbMatch(results, media.title, media.originalTitle.orEmpty(), media.year)
-                    ?: results.firstOrNull { result -> similarTitle(result.name, media.title) }
+                tmdbMatch(seasonResults, media.title, media.originalTitle.orEmpty(), media.year)
+                    ?: seasonResults.firstOrNull { result -> similarTitle(result.name, media.title) }
             }
             ?: return null
         val loaded = entry.api.load(candidate.url) ?: return null

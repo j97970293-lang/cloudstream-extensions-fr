@@ -144,7 +144,11 @@ class AniZoneProvider : MainAPI() {
     private fun parseSearchItems(html: String): List<SearchResponse> {
         val raw = Regex("""items:\s*JSON\.parse\('((?:\\.|[^'])*)'\)""")
             .find(html)?.groupValues?.getOrNull(1) ?: return emptyList()
-        val entries = runCatching { JSONArray(decodeJavascriptJson(raw)) }.getOrNull() ?: return emptyList()
+        // Le fragment Livewire contient une chaîne JavaScript encodée une fois
+        // de plus (\\u0022, \\\/, \\&). La convertir manuellement laissait un
+        // antislash invalide devant « & » et faisait taire AniZone. On décode
+        // d'abord la chaîne externe, puis le JSON interne.
+        val entries = runCatching { JSONArray(decodeJavascriptString(raw)) }.getOrNull() ?: return emptyList()
         return (0 until entries.length()).mapNotNull { index ->
             val item = entries.optJSONObject(index) ?: return@mapNotNull null
             val title = item.optString("main_title").takeIf(String::isNotBlank) ?: return@mapNotNull null
@@ -157,7 +161,7 @@ class AniZoneProvider : MainAPI() {
 
     private fun decodePlayerPayloads(html: String): List<JSONObject> {
         return Regex("""JSON\.parse\('((?:\\.|[^'])*)'\)""").findAll(html)
-            .mapNotNull { match -> runCatching { JSONObject(decodeJavascriptJson(match.groupValues[1])) }.getOrNull() }
+            .mapNotNull { match -> runCatching { JSONObject(decodeJavascriptString(match.groupValues[1])) }.getOrNull() }
             .filter { it.optString("src").startsWith("http") }
             .distinctBy { it.optString("src") }
             .toList()
@@ -174,12 +178,9 @@ class AniZoneProvider : MainAPI() {
         }
     }
 
-    private fun decodeJavascriptJson(value: String): String = value
-        .replace("\\u0022", "\"")
-        .replace("\\u0026", "&")
-        .replace("\\u0027", "'")
-        .replace(Regex("""\\+/"""), "/")
-        .replace("\\\"", "\"")
+    /** Décode la chaîne JavaScript externe, sans altérer le JSON interne. */
+    private fun decodeJavascriptString(value: String): String =
+        JSONObject("""{"payload":"${value.replace("\"", "\\\"")}"}""").optString("payload")
 
     private fun decodeHtml(value: String): String = value
         .replace("&quot;", "\"")

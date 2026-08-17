@@ -29,6 +29,27 @@ internal object MovixPackedPlayerParser {
     }
 }
 
+/** Extrait les pistes sidecar déclarées par les lecteurs Movix et embeds associés. */
+internal object MovixSubtitleParser {
+    private val subtitleUrl = Regex(
+        """https?://[^\s"'\\]+\.(?:vtt|srt|ass|ttml)(?:\?[^\s"'\\]*)?""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    fun emit(html: String, baseUrl: String, callback: (SubtitleFile) -> Unit) {
+        val emitted = mutableSetOf<String>()
+        val document = Jsoup.parse(html, baseUrl)
+        document.select("track[src]").forEach { track ->
+            val url = track.attr("abs:src").takeIf(String::isNotBlank) ?: return@forEach
+            val label = track.attr("label").ifBlank { track.attr("srclang") }.ifBlank { "Sous-titres" }
+            if (emitted.add(url)) callback(SubtitleFile(label, url))
+        }
+        subtitleUrl.findAll(html).map { it.value }.forEach { url ->
+            if (emitted.add(url)) callback(SubtitleFile("Sous-titres", url))
+        }
+    }
+}
+
 internal object MovixExtractorPipeline {
     suspend fun <T> load(
         links: List<String>,
@@ -69,6 +90,8 @@ internal abstract class MovixPackedPlayerExtractor : ExtractorApi() {
             "Origin" to mainUrl,
             "User-Agent" to USER_AGENT
         )
+
+        MovixSubtitleParser.emit(response.text, url, subtitleCallback)
 
         MovixPackedPlayerParser.extractMediaUrls(response.text).forEach { streamUrl ->
             val type = if (streamUrl.contains(".m3u8", ignoreCase = true)) {
@@ -171,6 +194,7 @@ internal class MovixHostEmbedExtractor(
         }
 
         val pageText = response.text
+        MovixSubtitleParser.emit(pageText, url, subtitleCallback)
         val embedLinks = collectLinks(pageText)
 
         if (embedLinks.isEmpty()) {
@@ -186,6 +210,7 @@ internal class MovixHostEmbedExtractor(
             val nestedText = runCatching {
                 app.get(nested, referer = url, headers = mapOf("User-Agent" to USER_AGENT), timeout = 20L).text
             }.getOrNull() ?: continue
+            MovixSubtitleParser.emit(nestedText, nested, subtitleCallback)
             collectLinks(nestedText).forEach { streamUrl ->
                 resolved = true
                 emitLink(streamUrl, url, refererHost, callback)
