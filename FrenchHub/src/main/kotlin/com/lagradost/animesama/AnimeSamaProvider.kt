@@ -72,6 +72,10 @@ class AnimeSamaProvider : MainAPI() {
         val tmdbId = parts.getOrNull(0)?.toIntOrNull()
             ?: throw ErrorLoadingException("Identifiant TMDB manquant pour Anime-Sama")
         val type = parts.getOrNull(1) ?: "tv"
+        // Anime-Sama est un site exclusivement dédié aux animés : aucune fiche
+        // film ne doit être traitée (les entrées « Anime-Sama (embed) » vides
+        // sur les films venaient de là).
+        if (type != "tv") throw ErrorLoadingException("Anime-Sama ne traite que les séries/animes")
         val season = parts.getOrNull(2)?.toIntOrNull()
         val episode = parts.getOrNull(3)?.toIntOrNull()
         val title = parts.getOrNull(4)?.takeIf(String::isNotBlank) ?: "Anime"
@@ -184,28 +188,9 @@ class AnimeSamaProvider : MainAPI() {
                 }
             }
         }
-        if (!emitted) {
-            // Fallback : émettre l'embed brut (M3U8/MP4) pour que le lecteur
-            // apparaisse même si aucun extracteur interne ne le résout.
-            val last = links.last()
-            callback(
-                ExtractorLink(
-                    source = "Anime-Sama",
-                    name = "Anime-Sama (embed)",
-                    url = last,
-                    referer = "$mainUrl/",
-                    quality = Qualities.Unknown.value,
-                    headers = mapOf("Referer" to "$mainUrl/", "User-Agent" to userAgent),
-                    type = when {
-                        last.contains(".m3u8", true) -> ExtractorLinkType.M3U8
-                        last.contains(".mp4", true) || last.contains("sibnet") -> ExtractorLinkType.VIDEO
-                        last.contains(".mpd", true) -> ExtractorLinkType.DASH
-                        else -> ExtractorLinkType.M3U8
-                    },
-                ),
-            )
-            emitted = true
-        }
+        // Aucun extracteur n'a résolu l'embed : ne pas émettre de lecteur vide
+        // (l'ancien fallback « Anime-Sama (embed) » apparaissait même sur les
+        // films non-anime et affichait un lecteur non fonctionnel).
         return emitted
     }
 

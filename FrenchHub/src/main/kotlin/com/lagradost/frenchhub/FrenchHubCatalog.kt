@@ -333,7 +333,7 @@ class FrenchHubCatalog : MainAPI() {
                         val providerData = directProviderData(entry, media)
                             ?: searchProviderData(entry, media)
                             ?: return@launch
-                        withTimeoutOrNull(30_000L) {
+                        withTimeoutOrNull(45_000L) {
                             entry.api.loadLinks(
                                 providerData,
                                 isCasting,
@@ -376,21 +376,17 @@ class FrenchHubCatalog : MainAPI() {
                 parts
             }
             "animesama" -> {
-                if (media.tmdbId == null) null
-                else {
-                    val parts = buildString {
-                        append("animesama://")
-                        append(media.tmdbId)
-                        append("::")
-                        append(if (media.type == "movie") "movie" else "tv")
-                        append("::")
-                        append(media.season ?: 1)
-                        append("::")
-                        append(media.episode ?: 1)
-                        append("::")
-                        append(media.title)
-                    }
-                    parts
+                buildString {
+                    append("animesama://")
+                    append(media.tmdbId)
+                    append("::")
+                    append(if (media.type == "movie") "movie" else "tv")
+                    append("::")
+                    append(media.season ?: 1)
+                    append("::")
+                    append(media.episode ?: 1)
+                    append("::")
+                    append(media.title)
                 }
             }
             "movix" -> {

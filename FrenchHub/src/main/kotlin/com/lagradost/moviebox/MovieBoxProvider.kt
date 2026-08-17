@@ -180,17 +180,19 @@ class MovieBoxProvider : MainAPI() {
 
                 val displayName = buildName(language)
                 val emittedUrls = mutableSetOf<String>()
+                val emittedSources = mutableSetOf<String>()
 
                 downloadObj.optJSONArray("downloads")?.let { array ->
                     (0 until array.length()).mapNotNull { array.optJSONObject(it) }.forEach { download ->
                         val url = download.optString("url").takeIf(String::isNotBlank) ?: return@forEach
                         if (download.optBoolean("vipLocked", false)) return@forEach
                         val resolution = download.optInt("resolution")
-                        if (emittedUrls.add(url)) {
+                        val sourceKey = sourceKey(url)
+                        if (emittedUrls.add(url) && emittedSources.add(sourceKey)) {
                             callback.invoke(
                                 newExtractorLink(
                                     displayName,
-                                    "$displayName ${qualityLabel(resolution)}".trim(),
+                                    "${languageLabel(language)} ${qualityLabel(resolution)}".trim(),
                                     url,
                                 ) {
                                     this.headers = mapOf(
@@ -210,11 +212,12 @@ class MovieBoxProvider : MainAPI() {
                         if (stream.optBoolean("vipLocked", false)) return@forEach
                         val resolution = stream.optString("resolutions").toIntOrNull()
                             ?: stream.optInt("resolution", 0)
-                        if (emittedUrls.add(url)) {
+                        val sourceKey = sourceKey(url)
+                        if (emittedUrls.add(url) && emittedSources.add(sourceKey)) {
                             callback.invoke(
                                 newExtractorLink(
                                     displayName,
-                                    "$displayName ${qualityLabel(resolution)}".trim(),
+                                    "${languageLabel(language)} ${qualityLabel(resolution)}".trim(),
                                     url,
                                 ) {
                                     this.headers = mapOf(
@@ -236,7 +239,7 @@ class MovieBoxProvider : MainAPI() {
                             callback.invoke(
                                 newExtractorLink(
                                     displayName,
-                                    "$displayName (Auto)".trim(),
+                                    "${languageLabel(language)} (Auto)".trim(),
                                     url,
                                 ) {
                                     this.headers = mapOf(
@@ -332,15 +335,29 @@ class MovieBoxProvider : MainAPI() {
         return result.takeIf { it.isNotEmpty() }
     }
 
-    /** Construit le nom affiché du lecteur, en français lisible. */
-    private fun buildName(language: String): String {
-        val tag = when (language.uppercase()) {
-            "VERSION FRANÇAISE" -> "VF"
-            "ORIGINAL" -> "Original"
-            else -> language.uppercase()
-        }
-        return "MovieBox [$tag]"
+    /** Le nom de la source du lecteur (affiché en premier dans l'UI). */
+    private fun buildName(language: String): String = "MovieBox"
+
+    /** Libellé de la langue en clair pour le nom du lecteur. */
+    private fun languageLabel(language: String): String = when (language.uppercase()) {
+        "VERSION FRANÇAISE" -> "VF"
+        "ORIGINAL" -> "Original"
+        else -> language.uppercase()
     }
+
+    /**
+     * Clé de dédoublonnage du fichier source : les fiches MovieBox dupliquées
+     * (« VF », « Version française », original…) renvoient les mêmes vidéos
+     * depuis des CDN différents (URLs distinctes). On ne conserve qu'un seul
+     * lecteur par couple hôte + chemin du fichier.
+     */
+    private fun sourceKey(url: String): String = runCatching {
+        val host = Regex("""https?://([^/]+)/""").find(url)?.groupValues?.getOrNull(1) ?: ""
+        val path = url.substringAfter("?").let { rest ->
+            if (rest == url) url.substringAfterLast('/') else ""
+        }
+        "$host/$path"
+    }.getOrDefault(url)
 
     /** Libellé humain de la résolution (480 → « 480p », 0 → vide). */
     private fun qualityLabel(resolution: Int): String = when (resolution) {
