@@ -5,7 +5,6 @@ import android.text.InputType
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.CheckBox
 import android.widget.ScrollView
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
@@ -34,12 +33,6 @@ internal object FrenchHubSettings {
         DomainSpec("moviebox", "MovieBox API", "https://h5-api.aoneroom.com"),
     )
 
-    private const val AUTO_KEY = "frenchhub.auto.enabled"
-
-    fun isAutoDetect(): Boolean = getKey<Boolean>(AUTO_KEY) ?: true
-
-    fun setAutoDetect(enabled: Boolean) = setKey(AUTO_KEY, enabled)
-
     fun isEnabled(key: String): Boolean = getKey<Boolean>(PREFIX + key) ?: true
 
     fun setEnabled(key: String, enabled: Boolean) = setKey(PREFIX + key, enabled)
@@ -60,18 +53,11 @@ internal object FrenchHubSettings {
 
     fun show(context: Context, onSaved: () -> Unit) {
         val checked = providers.map { isEnabled(it.key) }.toBooleanArray()
-        var autoDetectChecked = isAutoDetect()
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(32, 8, 32, 0)
         }
-        val autoDetectInput = CheckBox(context).apply {
-            text = "Détection automatique des liens (miroirs)"
-            isChecked = autoDetectChecked
-            setOnCheckedChangeListener { _, isChecked -> autoDetectChecked = isChecked }
-        }
         val domainInputs = linkedMapOf<String, EditText>()
-        root.addView(autoDetectInput)
         domains.forEach { spec ->
             val input = EditText(context).apply {
                 hint = spec.defaultUrl
@@ -96,15 +82,12 @@ internal object FrenchHubSettings {
                 providers.forEachIndexed { index, provider ->
                     setEnabled(provider.key, checked[index])
                 }
-                setAutoDetect(autoDetectChecked)
                 domainInputs.forEach { (key, input) -> setDomain(key, input.text.toString()) }
-                if (!autoDetectChecked) FrenchHubDomainDetector.resetCache()
                 onSaved()
             }
             .setNegativeButton("Annuler", null)
             .setNeutralButton("Réinitialiser domaines") { _, _ ->
                 domains.forEach { setDomain(it.key, it.defaultUrl) }
-                FrenchHubDomainDetector.resetCache()
                 onSaved()
             }
             .show()

@@ -259,10 +259,20 @@ class AnimeSamaProvider : MainAPI() {
             app.get(pageUrl, headers = browserHeaders, referer = "$mainUrl/", timeout = 12L)
         }.getOrNull() ?: return emptyMap()
         val doc = response.document
-        val script = doc.selectFirst("#sousBlocMiddle script")?.toString() ?: return emptyMap()
-        val episodeScriptPath = episodesScriptRegex.find(script)?.groupValues?.getOrNull(1) ?: return emptyMap()
+        // Le site charge episodes.js via un tag <script src='episodes.js?filever=N'>
+        // dont le contenu inline est vide : chercher la référence dans le
+        // document ENTIER (et pas seulement dans le premier script inline
+        // de #sousBlocMiddle, comme faisait la v16 qui ne trouvait donc
+        // jamais rien). Le src est relatif à la page de saison.
+        val episodeScriptPath = episodesScriptRegex.find(doc.html())?.groupValues?.getOrNull(1)
+            ?: return emptyMap()
+        val resolvedScript = if (episodeScriptPath.startsWith("http", true)) {
+            episodeScriptPath
+        } else {
+            "$pageUrl/${episodeScriptPath.trimStart('/')}"
+        }
         val episodeScript = runCatching {
-            app.get("$pageUrl/$episodeScriptPath", headers = browserHeaders, referer = pageUrl, timeout = 12L).text
+            app.get(resolvedScript, headers = browserHeaders, referer = pageUrl, timeout = 12L).text
         }.getOrNull() ?: return emptyMap()
         val urls = episodesRegex.findAll(episodeScript).flatMap { match ->
             stringLiteralRegex.findAll(match.groupValues[2])

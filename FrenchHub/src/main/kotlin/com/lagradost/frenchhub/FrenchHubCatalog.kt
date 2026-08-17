@@ -307,31 +307,6 @@ class FrenchHubCatalog : MainAPI() {
         frenchManga.mainUrl = FrenchHubSettings.domain("frenchmanga")
         movieBox.mainUrl = FrenchHubSettings.domain("moviebox")
         animeSama.mainUrl = FrenchHubSettings.domain("animesama")
-        // Détection automatique des miroirs actifs : le domaine d'un provider est
-        // remplacé par le miroir qui répond en premier, si le mode est activé.
-        // La détection reste courte (8 s au total) pour ne pas retarder les
-        // lecteurs ; en cas d'échec, le domaine manuel est conservé.
-        coroutineScope {
-            val domainEntries = providers.map { entry ->
-                async {
-                    withTimeoutOrNull(8_000L) {
-                        val manual = FrenchHubSettings.domain(entry.key)
-                        val resolved = FrenchHubDomainDetector.resolve(entry.key, manual)
-                        entry.key to resolved
-                    }
-                }
-            }
-            val resolved = domainEntries.awaitAll().filterNotNull().toMap()
-            resolved.forEach { (key, domain) ->
-                when (key) {
-                    "frenchstream" -> frenchStream.mainUrl = domain
-                    "movix" -> movix.mainUrl = domain
-                    "frenchmanga" -> frenchManga.mainUrl = domain
-                    "moviebox" -> movieBox.mainUrl = domain
-                    "animesama" -> animeSama.mainUrl = domain
-                }
-            }
-        }
         // Les sous-providers (FStream, Movix, Wiflix, …) partagent souvent les mêmes
         // liens finaux (vidzy, uqload, …). Il faut conserver UN lecteur par
         // (provider, URL) et non par URL seule, sinon le premier provider à émettre

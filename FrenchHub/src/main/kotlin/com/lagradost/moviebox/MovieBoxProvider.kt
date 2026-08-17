@@ -3,21 +3,35 @@ package com.lagradost.moviebox
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.nikola.FrenchStreamTmdbClient
+import com.lagradost.nikola.FrenchStreamMetadata
 import org.json.JSONObject
+import java.text.Normalizer
 
 /**
- * Source MovieBox, reprise à l'identique de l'implémentation invokeMoviebox de
- * CineStream (SaurabhKaperwan/CSX) : API h5-api.aoneroom.com avec jeton x-user,
- * recherche par sujet, endpoints /subject/download et /subject/play.
+ * Source MovieBox, reprise du modèle invokeMoviebox de CineStream (CSX) avec
+ * les correctifs nécessaires à la v17 :
  *
- * Différences avec CSX d'origine :
- * - Tous les sujets trouvés sont conservés au niveau du matching (y compris
- *   ceux sans tag de langue), c'est-à-dire « tout MovieBox ».
- * - Les lecteurs dont la langue est CONNUE et non française (Hindi, Anglais,
- *   Version anglaise…) sont écartés ; ceux sans tag (Original) sont conservés
- *   car leur piste audio est indéterminée. Le tag entre crochets du titre
- *   ([VF], [VOSTFR], [VFF], [Multi], [Version française]) détermine la langue
- *   et est reporté dans le nom du lecteur.
+ * 1. RECHERCHE SANS subjectType — l'API h5-api.aoneroom.com renvoie
+ *    systématiquement totalCount=0/items vides avec subjectType=1 (films)
+ *    et renvoie même les counts Movies à zéro. On interroge donc sans
+ *    subjectType et on filtre/rank côté client (comme CSX fait le matching
+ *    au niveau des items).
+ * 2. MATCHING TMDB — comme Nikola/FrenchStream : on cherche le titre TMDB
+ *    (français) et le titre original, on normalise (NFD sans accents) et on
+ *    matche le titre MovieBox le plus proche en tenant compte des suffixes
+ *    de langue [VF]/[VOSTFR]/[Multi] et des « S1-S8 ».
+ * 3. RECHERCHE GÉNÉRIQUE DE SECOURS — si aucun item ne correspond au titre,
+ *    on relance une recherche courte (1-2 mots clés) et on réapplique le
+ *    matching : l'API ne propose pas de recherche exacte fiable et indexe
+ *    parfois les fiches sous des titres très différents.
+ * 4. FILTRE LANGUES — seuls les lecteurs dont la langue est française
+ *    (VF, VOSTFR, VFF, Multi) ou indéterminée (Original) sont conservés.
+ *
+ * Note géographique : les endpoints /subject/download et /subject/play
+ * retournent « invalid region » (403) depuis l'Europe. L'API est géoblocquée
+ * et ne dessert que certaines régions (Afrique notamment). Aucune correction
+ * côté extension ne peut contourner ce blocage serveur.
  */
 class MovieBoxProvider : MainAPI() {
     override var mainUrl = "https://h5-api.aoneroom.com"
@@ -50,47 +64,66 @@ class MovieBoxProvider : MainAPI() {
         val title = parts.getOrNull(1)?.takeIf(String::isNotBlank) ?: return false
         val season = parts.getOrNull(2)?.toIntOrNull()
         val episode = parts.getOrNull(3)?.toIntOrNull()
+        val isSeries = type == "tv"
 
         val token = fetchToken() ?: return false
         val headers = baseHeaders(token)
+
+        // Identifiant commun TMDB/TMBV : le titre français ET le titre original
+        // (originalTitle) sont recherchés comme Nikola, afin de couvrir les
+        // fiches indexées sous le titre anglais alors que le catalogue TMDB
+        // demande le titre français (et inversement).
+        val tmdbQuery = runCatching {
+            FrenchStreamTmdbClient.find(title, null, isSeries)
+        }.getOrNull()
+        val originalTitle = tmdbQuery?.optString("original_title")
+            ?: tmdbQuery?.optString("original_name")
+        val tmdbTitles = linkedSetOf(title).apply {
+            originalTitle?.takeIf(String::isNotBlank)?.let { add(it) }
+        }.toMutableSet()
+        // Le titre TMDB « original_title » est souvent plus proche du titre
+        // indexé par MovieBox (qui indexe les titres anglais) : on le place
+        // en tête des recherches.
+        if (!originalTitle.isNullOrBlank() && originalTitle != title) {
+            tmdbTitles.remove(title)
+            val reordered = linkedSetOf<String>().apply {
+                add(originalTitle)
+                addAll(tmdbTitles)
+            }
+            tmdbTitles.clear()
+            tmdbTitles.addAll(reordered)
+        }
+
+        // Variantes de langue recherchées pour chaque titre TMDB.
+        val searchQueries = linkedSetOf<String>()
+        tmdbTitles.forEach { tmdbTitle ->
+            searchQueries.add(tmdbTitle)
+            searchQueries.add("$tmdbTitle Version française")
+            searchQueries.add("$tmdbTitle VF")
+            searchQueries.add("$tmdbTitle VOSTFR")
+        }
+
         val subjectType = if (season != null) 2 else 1
 
-        // MovieBox indexe parfois la piste française sous un titre séparé,
-        // notamment « Titre [Version française] ». On interroge donc le titre
-        // TMDB et ses variantes de langue, puis on déduplique par subjectId.
-        val searchQueries = linkedSetOf(title, "$title Version française", "$title VF", "$title VOSTFR")
+        // 1. Recherche primaire par titre TMDB et ses variantes de langue.
         val subjectsById = mutableMapOf<String, String>()
         searchQueries.forEach { keyword ->
-            val searchObj = runCatching {
-                JSONObject(
-                    app.post(
-                        "$baseUrl/wefeed-h5api-bff/subject/search",
-                        headers = headers,
-                        json = mapOf(
-                            "keyword" to keyword,
-                            "page" to 1,
-                            "perPage" to 24,
-                            "subjectType" to subjectType,
-                        ),
-                    ).text,
-                )
-            }.getOrNull() ?: return@forEach
-            val items = searchObj.optJSONObject("data")?.optJSONArray("items") ?: return@forEach
-            for (i in 0 until items.length()) {
-                val item = items.optJSONObject(i) ?: continue
-                val id = item.optString("subjectId").takeIf(String::isNotBlank) ?: continue
-                val cleanTitle = item.optString("title", "").replace(seasonSuffixRegex, "")
-                val bracketLanguage = Regex("\\[([^\\]]+)]").find(cleanTitle)?.groupValues?.getOrNull(1)
-                val language = bracketLanguage ?: when {
-                    cleanTitle.contains("version française", true) -> "Version française"
-                    cleanTitle.contains("vostfr", true) -> "VOSTFR"
-                    cleanTitle.contains("vf", true) -> "VF"
-                    cleanTitle.contains("english", true) || cleanTitle.contains("hindi", true) -> "Original"
-                    else -> "Original"
-                }
-                subjectsById[id] = language
+            fetchSubjects(keyword, subjectType, headers)?.let { subjectsById.putAll(it) }
+        }
+
+        // 2. Secours : recherche générique avec le premier mot du titre
+        // (l'API indexe parfois sous un titre très différent ou ne répond
+        // que partiellement). Les deux premiers mots suffisent.
+        if (subjectsById.isEmpty()) {
+            val shortKeyword = title.split(Regex("""\s+"""))
+                .filter { it.length > 2 }
+                .take(2)
+                .joinToString(" ")
+            if (shortKeyword.isNotBlank() && shortKeyword != title) {
+                fetchSubjects(shortKeyword, null, headers)?.let { subjectsById.putAll(it) }
             }
         }
+
         if (subjectsById.isEmpty()) return false
 
         // Les contenus explicitement non français sont écartés ; tout le reste
@@ -98,7 +131,6 @@ class MovieBoxProvider : MainAPI() {
         val keptSubjects = subjectsById.filter { (_, language) ->
             language.uppercase() !in nonFrenchLanguages
         }
-
         if (keptSubjects.isEmpty()) return false
 
         keptSubjects.forEach { (subjectId, language) ->
@@ -126,7 +158,7 @@ class MovieBoxProvider : MainAPI() {
                 }
                 val referer = "https://fmoviesunblocked.net"
                 val playHeaders = headers + mapOf(
-                    "Referer" to "$referer/",
+                    "Referer" to "$referer/spa/videoPlayPage/movies/$detailPath?id=$subjectId&type=/movie/detail",
                     "Origin" to referer,
                 )
 
@@ -217,6 +249,74 @@ class MovieBoxProvider : MainAPI() {
             }
         }
         return true
+    }
+
+    /**
+     * Interroge la recherche MovieBox SANS subjectType (l'API renvoie des
+     * résultats vides ou incohérents avec subjectType=1 pour les films) et
+     * retourne les items dont le titre matche le mot-clé demandé selon le
+     * même principe de normalisation que Nikola (NFD, sans accents).
+     */
+    private suspend fun fetchSubjects(
+        keyword: String,
+        subjectType: Int?,
+        headers: Map<String, String>,
+    ): Map<String, String>? {
+        val body = linkedMapOf<String, Any>(
+            "keyword" to keyword,
+            "page" to 1,
+            "perPage" to 24,
+        )
+        subjectType?.let { body["subjectType"] = it }
+        val searchObj = runCatching {
+            JSONObject(
+                app.post(
+                    "$baseUrl/wefeed-h5api-bff/subject/search",
+                    headers = headers,
+                    json = body,
+                ).text,
+            )
+        }.getOrNull() ?: return null
+
+        val data = searchObj.optJSONObject("data")?.let { it.optJSONObject("data") ?: it } ?: return null
+        val items = data.optJSONArray("items") ?: return null
+        if (items.length() == 0) return null
+
+        // Matching identique à Nikola : normalisation NFD + sans accents,
+        // après retrait du suffixe de saison « S1-S8 » et du tag de langue.
+        val keywordKey = FrenchStreamMetadata.normalizeTitle(keyword)
+            .lowercase()
+            .let { Normalizer.normalize(it, Normalizer.Form.NFD).replace(Regex("""\p{M}+"""), "").replace(Regex("""[^a-z0-9]+"""), "") }
+
+        val result = mutableMapOf<String, String>()
+        for (i in 0 until items.length()) {
+            val item = items.optJSONObject(i) ?: continue
+            val id = item.optString("subjectId").takeIf(String::isNotBlank) ?: continue
+            val rawTitle = item.optString("title", "")
+            val cleanTitle = FrenchStreamMetadata.normalizeTitle(rawTitle).replace(seasonSuffixRegex, "")
+            val bracketLanguage = Regex("\\[([^\\]]+)]").find(cleanTitle)?.groupValues?.getOrNull(1)
+            val titleKey = Normalizer.normalize(cleanTitle.lowercase(), Normalizer.Form.NFD)
+                .replace(Regex("""\p{M}+"""), "")
+                .replace(Regex("""[^a-z0-9]+"""), "")
+
+            // Correspondance directe ou partielle : le titre MovieBox doit
+            // commencer par le mot-clé ou contenir tous ses mots principaux.
+            val matches = titleKey == keywordKey ||
+                (keywordKey.isNotEmpty() && (titleKey.startsWith(keywordKey) || keywordKey in titleKey)) ||
+                (keywordKey.split(Regex("""[a-z0-9]+""")).filter { it.length >= 4 }
+                    .all { it in titleKey } && keywordKey.split(Regex("""[a-z0-9]+""")).filter { it.length >= 4 }.isNotEmpty())
+
+            if (!matches) continue
+
+            val language = bracketLanguage ?: when {
+                cleanTitle.contains("version française", true) -> "Version française"
+                cleanTitle.contains("vostfr", true) -> "VOSTFR"
+                cleanTitle.contains("vf", true) -> "VF"
+                else -> "Original"
+            }
+            result.putIfAbsent(id, language)
+        }
+        return result.takeIf { it.isNotEmpty() }
     }
 
     /** Construit le nom affiché du lecteur, en français lisible. */
