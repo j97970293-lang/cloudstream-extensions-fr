@@ -31,7 +31,6 @@ import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.frenchhub.frenchmanga.FrenchMangaProvider
-import com.lagradost.frenchhub.nakastream.NakaStreamProvider
 import com.lagradost.nikola.NikolaFrenchStreamProvider
 import com.lagradost.frenchhub.movix.MovixProvider
 import com.lagradost.moviebox.MovieBoxProvider
@@ -65,7 +64,6 @@ class FrenchHubCatalog : MainAPI() {
     private val movix = MovixProvider()
     private val frenchManga = FrenchMangaProvider()
     private val movieBox = MovieBoxProvider()
-    private val nakaStream = NakaStreamProvider()
 
     private val providers = listOf(
         // Provider Nikola (Nikola17/cloudstream-frenchstream) : recherche directe
@@ -78,7 +76,6 @@ class FrenchHubCatalog : MainAPI() {
         Entry("movix", "Movix", movix),
         Entry("frenchmanga", "French-Manga", frenchManga),
         Entry("moviebox", "MovieBox", movieBox),
-        Entry("nakastream", "NakaStream", nakaStream),
     )
 
     private val providerByKey = providers.associateBy { it.key }
@@ -307,7 +304,6 @@ class FrenchHubCatalog : MainAPI() {
         movix.mainUrl = FrenchHubSettings.domain("movix")
         frenchManga.mainUrl = FrenchHubSettings.domain("frenchmanga")
         movieBox.mainUrl = FrenchHubSettings.domain("moviebox")
-        nakaStream.mainUrl = FrenchHubSettings.domain("nakastream")
         FrenchHubSettings.apiMainUrls.forEach { (key, url) ->
             providerByKey[key]?.api?.mainUrl = url
         }

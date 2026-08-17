@@ -10,3 +10,7 @@
 - [x] Auditer les sources françaises des dépôts Luna fournis et sélectionner celles compatibles avec CloudStream.
 - [x] Porter les sources françaises Luna retenues dans FrenchHub.
 - [x] Compiler, tester et publier FrenchHub avec la correction de déduplication.
+- [x] Retirer NakaStream du catalogue, des réglages et des sources FrenchHub.
+- [x] Auditer des extensions CloudStream françaises et valider leurs providers par des requêtes reproductibles.
+- [x] Intégrer uniquement les providers supplémentaires dont la résolution de lecteurs est confirmée (aucun candidat additionnel n’a passé la validation).
+- [x] Compiler, tester et publier une version FrenchHub sans NakaStream.
