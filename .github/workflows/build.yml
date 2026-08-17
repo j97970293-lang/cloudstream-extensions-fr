@@ -57,9 +57,9 @@ jobs:
         run: |
           rm -rf published-mirror
           cp -R published published-mirror
-          sed -i 's#https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/builds/#https://cdn.jsdelivr.net/gh/j97970293-lang/cloudstream-extensions-fr@mirror/#g' published-mirror/plugins.json
-          sed -i 's#https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/master/docs/frenchhub.png#https://cdn.jsdelivr.net/gh/j97970293-lang/cloudstream-extensions-fr@mirror/frenchhub.png#g' published-mirror/plugins.json
-          sed -i 's#https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/builds/plugins.json#https://cdn.jsdelivr.net/gh/j97970293-lang/cloudstream-extensions-fr@mirror/plugins.json#g' published-mirror/repo.json
+          sed -i 's#https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/builds/#https://j97970293-lang.github.io/cloudstream-extensions-fr/#g' published-mirror/plugins.json
+          sed -i 's#https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/master/docs/frenchhub.png#https://j97970293-lang.github.io/cloudstream-extensions-fr/frenchhub.png#g' published-mirror/plugins.json
+          sed -i 's#https://raw.githubusercontent.com/j97970293-lang/cloudstream-extensions-fr/builds/plugins.json#https://j97970293-lang.github.io/cloudstream-extensions-fr/plugins.json#g' published-mirror/repo.json
 
       - name: Publish builds branch
         uses: peaceiris/actions-gh-pages@v4
