@@ -34,6 +34,11 @@ import com.lagradost.nikola.NikolaFrenchStreamProvider
 import com.lagradost.frenchhub.movix.MovixProvider
 import com.lagradost.moviebox.MovieBoxProvider
 import com.lagradost.frenchhub.animesama.AnimeSamaProvider
+import com.lagradost.frenchhub.wiflix.WiflixProvider
+import com.lagradost.frenchhub.frenchanime.FrenchAnime
+import com.lagradost.frenchhub.jourfilm.JourFilm
+import com.lagradost.frenchhub.frembed.Frembed
+import com.lagradost.frenchhub.dotriv.DoTriv
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -65,6 +70,14 @@ class FrenchHubCatalog : MainAPI() {
     private val frenchManga = FrenchMangaProvider()
     private val movieBox = MovieBoxProvider()
     private val animeSama = AnimeSamaProvider()
+    // Providers additionnels activés via le menu Providers : leur matching passe
+    // par le matching TMDB du catalogue (titre FR + original + variantes),
+    // exactement comme French-Stream et Movix.
+    private val wiflix = WiflixProvider()
+    private val frenchAnime = FrenchAnime()
+    private val jourFilm = JourFilm()
+    private val frembed = Frembed()
+    private val doTriv = DoTriv()
 
     private val providers = listOf(
         // Provider Nikola (Nikola17/cloudstream-frenchstream) : recherche directe
@@ -78,6 +91,11 @@ class FrenchHubCatalog : MainAPI() {
         Entry("frenchmanga", "French-Manga", frenchManga),
         Entry("moviebox", "MovieBox", movieBox),
         Entry("animesama", "Anime-Sama", animeSama),
+        Entry("wiflix", "Wiflix", wiflix),
+        Entry("frenchanime", "French Anime", frenchAnime),
+        Entry("jourfilm", "1jour1Film", jourFilm),
+        Entry("frembed", "Frembed", frembed),
+        Entry("dotriv", "DoTriv", doTriv),
     )
 
     private val providerByKey = providers.associateBy { it.key }
@@ -307,6 +325,9 @@ class FrenchHubCatalog : MainAPI() {
         frenchManga.mainUrl = FrenchHubSettings.domain("frenchmanga")
         movieBox.mainUrl = FrenchHubSettings.domain("moviebox")
         animeSama.mainUrl = FrenchHubSettings.domain("animesama")
+        FrenchHubSettings.apiMainUrls.forEach { (key, url) ->
+            providerByKey[key]?.api?.mainUrl = url
+        }
         // Les sous-providers (FStream, Movix, Wiflix, …) partagent souvent les mêmes
         // liens finaux (vidzy, uqload, …). Il faut conserver UN lecteur par
         // (provider, URL) et non par URL seule, sinon le premier provider à émettre

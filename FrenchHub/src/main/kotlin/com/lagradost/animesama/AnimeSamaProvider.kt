@@ -281,15 +281,18 @@ class AnimeSamaProvider : MainAPI() {
                 }
             }
 
-            // 2. Recherche du site : fetch.php, scoring NFD, 2 meilleurs slugs.
+            // 2. Recherche du site : fetch.php retourne les slugs RÉELS des fiches
+            // trouvées — le matching est exact, bien meilleur que des slugs TMDB
+            // approximatifs. Pour chaque fiche trouvée on lit la page HTML et on
+            // charge episodes.js directement (le tag a un contenu inline vide,
+            // le fichier JS porte les vraies URLs).
             for (title in candidateTitles(titleFr, titleEn, titleOriginal, 0).take(2)) {
                 val found = runCatching { searchSiteSlugs(title) }.getOrNull().orEmpty()
                 for (slug in found) {
                     val vf = linkedMapOf<String, List<String>>()
                     val vostfr = linkedMapOf<String, List<String>>()
                     for (lang in languages) {
-                        val parsed = fetchEpisodeVars(slug, season, lang)
-                            .ifEmpty { fetchRootVars(slug, lang) }
+                        val parsed = fetchHtmlEpisodeVars(slug, lang)
                         if (parsed.isNotEmpty()) {
                             val streams = parseStreams(parsed, episode)
                             if (lang == "vf") vf.putAll(streams) else vostfr.putAll(streams)
@@ -303,7 +306,53 @@ class AnimeSamaProvider : MainAPI() {
             return SeasonEpisodes(emptyList(), emptyList())
         }
 
-        /** `var X = [...]` dans episodes.js (toutes les vars, comme Nuvio). */
+        /**
+         * Lit la page HTML de la fiche, repère la référence episodes.js dans le
+         * bloc des panneaux (le tag a un contenu inline vide, c'est le fichier
+         * JS qui porte les URLs) et charge ce fichier directement.
+         */
+        private suspend fun fetchHtmlEpisodeVars(slug: String, lang: String): List<Pair<String, List<String>>> {
+            // La page du panneau (ex. /catalogue/{slug}/saison1/vf/) porte la
+            // langue dans son chemin et son script episodes.js contient les
+            // URLs de cette langue seulement. La racine /catalogue/{slug}/ est
+            // essayée en secours (fiche mono-saison souvent hébergée à la racine).
+            val pageUrls = buildList {
+                add("$mainUrl/catalogue/$slug/saison$season/$lang/")
+                add("$mainUrl/catalogue/$slug/saison$season/$lang")
+                add("$mainUrl/catalogue/$slug/$lang/")
+                add("$mainUrl/catalogue/$slug/")
+            }
+            for (pageUrl in pageUrls) {
+                val episodeScript = runCatching {
+                    app.get(pageUrl, headers = browserHeaders).document
+                        .selectFirst("#sousBlocMiddle script[src*='episodes.js']")
+                        ?.attr("src")?.takeIf(String::isNotBlank)
+                        ?.let { attr ->
+                            if (attr.startsWith("http")) attr
+                            else {
+                                val root = attr.substringBefore("/episodes.js")
+                                "$pageUrl${if (root.isBlank()) "" else "$root/"}episodes.js"
+                            }
+                        }
+                }.getOrNull()
+                if (episodeScript.isNullOrBlank()) continue
+                val js = runCatching {
+                    app.get(episodeScript, headers = browserHeaders).text
+                }.getOrNull().orEmpty()
+                if (js.isBlank()) continue
+                val vars = varRegex.findAll(js).mapNotNull { match ->
+                    val varName = match.groupValues.getOrNull(1).orEmpty().ifBlank { return@mapNotNull null }
+                    val urls = quotedRegex.findAll(match.groupValues.getOrNull(2).orEmpty())
+                        .map { it.groupValues.getOrNull(1).orEmpty() }
+                        .filter { it.isNotBlank() && (it.startsWith("http") || it.startsWith("//")) }
+                        .toList()
+                    if (urls.isEmpty()) null else varName to urls
+                }.toList()
+                if (vars.isNotEmpty()) return vars
+            }
+            return emptyList()
+        }
+
         private fun parseStreams(vars: List<Pair<String, List<String>>>, episode: Int?): Map<String, List<String>> {
             val result = linkedMapOf<String, List<String>>()
             vars.forEachIndexed { index, (varName, urls) ->

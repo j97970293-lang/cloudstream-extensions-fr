@@ -22,6 +22,19 @@ internal object FrenchHubSettings {
         ProviderSpec("frenchmanga", "French-Manga"),
         ProviderSpec("moviebox", "MovieBox"),
         ProviderSpec("animesama", "Anime-Sama (VF/VOSTFR)"),
+        ProviderSpec("wiflix", "Wiflix"),
+        ProviderSpec("frenchanime", "French Anime"),
+        ProviderSpec("jourfilm", "1jour1Film"),
+        ProviderSpec("frembed", "Frembed"),
+        ProviderSpec("dotriv", "DoTriv"),
+    )
+
+    val apiMainUrls = mapOf(
+        "wiflix" to "https://flemmix.bond",
+        "frenchanime" to "https://french-anime.com",
+        "jourfilm" to "https://1jour1film0426c.site",
+        "frembed" to "https://frembed.skin",
+        "dotriv" to "https://dospiv.com",
     )
 
     /** Domaines éditables depuis les réglages de l'extension. */
