@@ -14,7 +14,9 @@ import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvSeriesLoadResponse
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.addEpisodes
+import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addImdbId
+import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTMDbId
 import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.newAnimeLoadResponse
@@ -139,7 +141,7 @@ class FrenchHubCatalog : MainAPI() {
             imdbId = imdbId,
             year = FrenchHubTmdb.year(details.optString("release_date")),
         ).toJson()
-        return newMovieLoadResponse(title, catalogUrl("movie", id), TvType.Movie, data) {
+        val response = newMovieLoadResponse(title, catalogUrl("movie", id), TvType.Movie, data) {
             posterUrl = FrenchHubTmdb.image(details.optString("poster_path"))
             backgroundPosterUrl = FrenchHubTmdb.image(details.optString("backdrop_path"), "original")
             plot = details.optString("overview").takeIf { it.isNotBlank() }
@@ -150,6 +152,8 @@ class FrenchHubCatalog : MainAPI() {
             addImdbId(imdbId)
             addTMDbId(id.toString())
         }
+        response.applyTmdbExtras(details)
+        return response
     }
 
     private suspend fun loadSeries(id: Int, details: JSONObject): LoadResponse {
@@ -222,7 +226,7 @@ class FrenchHubCatalog : MainAPI() {
         }.orEmpty()
     }
 
-    private fun TvSeriesLoadResponse.applySeriesMetadata(details: JSONObject, id: Int, imdbId: String?) {
+    private suspend fun TvSeriesLoadResponse.applySeriesMetadata(details: JSONObject, id: Int, imdbId: String?) {
         posterUrl = FrenchHubTmdb.image(details.optString("poster_path"))
         backgroundPosterUrl = FrenchHubTmdb.image(details.optString("backdrop_path"), "original")
         plot = details.optString("overview").takeIf { it.isNotBlank() }
@@ -231,9 +235,10 @@ class FrenchHubCatalog : MainAPI() {
         score = details.optDouble("vote_average").takeIf { it > 0.0 }?.let { com.lagradost.cloudstream3.Score.from10(it) }
         addImdbId(imdbId)
         addTMDbId(id.toString())
+        applyTmdbExtras(details)
     }
 
-    private fun AnimeLoadResponse.applySeriesMetadata(details: JSONObject, id: Int, imdbId: String?) {
+    private suspend fun AnimeLoadResponse.applySeriesMetadata(details: JSONObject, id: Int, imdbId: String?) {
         posterUrl = FrenchHubTmdb.image(details.optString("poster_path"))
         backgroundPosterUrl = FrenchHubTmdb.image(details.optString("backdrop_path"), "original")
         plot = details.optString("overview").takeIf { it.isNotBlank() }
@@ -242,6 +247,42 @@ class FrenchHubCatalog : MainAPI() {
         score = details.optDouble("vote_average").takeIf { it > 0.0 }?.let { com.lagradost.cloudstream3.Score.from10(it) }
         addImdbId(imdbId)
         addTMDbId(id.toString())
+        applyTmdbExtras(details)
+    }
+
+    /**
+     * Complète la fiche avec le casting (15 acteurs principaux de TMDB) et la
+     * bande-annonce officielle (vidéo YouTube « Trailer » ou « Teaser »).
+     * La fiche TMDB est déjà demandée avec credits et videos via
+     * FrenchHubTmdb.details (append_to_response).
+     */
+    private suspend fun LoadResponse.applyTmdbExtras(details: JSONObject) {
+        details.optJSONObject("credits")?.optJSONArray("cast")?.let { cast ->
+            val actors = (0 until cast.length())
+                .mapNotNull { cast.optJSONObject(it) }
+                .take(15)
+                .mapNotNull { actor ->
+                    val name = actor.optString("name").ifBlank { actor.optString("original_name") }
+                    if (name.isBlank()) return@mapNotNull null
+                    val character = actor.optString("character").ifBlank { actor.optString("known_for_department") }
+                    com.lagradost.cloudstream3.Actor(
+                        name,
+                        FrenchHubTmdb.image(actor.optString("profile_path"), "w185"),
+                    ) to character
+                }
+            if (actors.isNotEmpty()) addActors(actors)
+        }
+        details.optJSONObject("videos")?.optJSONArray("results")?.let { videos ->
+            val trailer = (0 until videos.length())
+                .mapNotNull { videos.optJSONObject(it) }
+                .firstOrNull { video ->
+                    video.optString("site", "").equals("YouTube", true) &&
+                        video.optString("type", "").let { type -> type.equals("Trailer", true) || type.equals("Teaser", true) }
+                }
+            trailer?.optString("key")?.takeIf { it.isNotBlank() }?.let { key ->
+                addTrailer("https://www.youtube.com/watch?v=$key")
+            }
+        }
     }
 
     override suspend fun loadLinks(
