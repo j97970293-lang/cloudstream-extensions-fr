@@ -55,36 +55,43 @@ class MovieBoxProvider : MainAPI() {
         val headers = baseHeaders(token)
         val subjectType = if (season != null) 2 else 1
 
-        val searchObj = runCatching {
-            JSONObject(
-                app.post(
-                    "$baseUrl/wefeed-h5api-bff/subject/search",
-                    headers = headers,
-                    json = mapOf(
-                        "keyword" to title,
-                        "page" to 1,
-                        "perPage" to 24,
-                        "subjectType" to subjectType,
-                    ),
-                ).text,
-            )
-        }.getOrNull() ?: return false
-
-        val items = searchObj.optJSONObject("data")?.optJSONArray("items") ?: return false
-        val titleMatchRegex = Regex(
-            "^${Regex.escape(title)}(?:\\s+\\[([^\\]]+)])?$",
-            RegexOption.IGNORE_CASE,
-        )
-        // Comportement CineStream : un sujet par identifiant, sa langue étant
-        // celle du tag entre crochets de son titre (ex : « Oppenheimer [VF] »).
+        // MovieBox indexe parfois la piste française sous un titre séparé,
+        // notamment « Titre [Version française] ». On interroge donc le titre
+        // TMDB et ses variantes de langue, puis on déduplique par subjectId.
+        val searchQueries = linkedSetOf(title, "$title Version française", "$title VF", "$title VOSTFR")
         val subjectsById = mutableMapOf<String, String>()
-        for (i in 0 until items.length()) {
-            val item = items.optJSONObject(i) ?: continue
-            val id = item.optString("subjectId").takeIf(String::isNotBlank) ?: continue
-            val cleanTitle = item.optString("title", "").replace(seasonSuffixRegex, "")
-            val language = titleMatchRegex.find(cleanTitle)?.groupValues?.getOrNull(1) ?: "Original"
-            subjectsById.putIfAbsent(id, language)
+        searchQueries.forEach { keyword ->
+            val searchObj = runCatching {
+                JSONObject(
+                    app.post(
+                        "$baseUrl/wefeed-h5api-bff/subject/search",
+                        headers = headers,
+                        json = mapOf(
+                            "keyword" to keyword,
+                            "page" to 1,
+                            "perPage" to 24,
+                            "subjectType" to subjectType,
+                        ),
+                    ).text,
+                )
+            }.getOrNull() ?: return@forEach
+            val items = searchObj.optJSONObject("data")?.optJSONArray("items") ?: return@forEach
+            for (i in 0 until items.length()) {
+                val item = items.optJSONObject(i) ?: continue
+                val id = item.optString("subjectId").takeIf(String::isNotBlank) ?: continue
+                val cleanTitle = item.optString("title", "").replace(seasonSuffixRegex, "")
+                val bracketLanguage = Regex("\\[([^\\]]+)]").find(cleanTitle)?.groupValues?.getOrNull(1)
+                val language = bracketLanguage ?: when {
+                    cleanTitle.contains("version française", true) -> "Version française"
+                    cleanTitle.contains("vostfr", true) -> "VOSTFR"
+                    cleanTitle.contains("vf", true) -> "VF"
+                    cleanTitle.contains("english", true) || cleanTitle.contains("hindi", true) -> "Original"
+                    else -> "Original"
+                }
+                subjectsById[id] = language
+            }
         }
+        if (subjectsById.isEmpty()) return false
 
         // Les contenus explicitement non français sont écartés ; tout le reste
         // (VF, VOSTFR, VFF, Multi, Original…) est conservé.

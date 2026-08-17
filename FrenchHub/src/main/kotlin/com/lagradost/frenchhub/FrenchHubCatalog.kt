@@ -33,6 +33,7 @@ import com.lagradost.frenchhub.frenchmanga.FrenchMangaProvider
 import com.lagradost.nikola.NikolaFrenchStreamProvider
 import com.lagradost.frenchhub.movix.MovixProvider
 import com.lagradost.moviebox.MovieBoxProvider
+import com.lagradost.frenchhub.animesama.AnimeSamaProvider
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -59,6 +60,12 @@ internal data class FrenchHubMediaData(
 class FrenchHubCatalog : MainAPI() {
     private data class Entry(val key: String, val label: String, val api: MainAPI)
 
+    private val frenchStream = NikolaFrenchStreamProvider()
+    private val movix = MovixProvider()
+    private val frenchManga = FrenchMangaProvider()
+    private val movieBox = MovieBoxProvider()
+    private val animeSama = AnimeSamaProvider()
+
     private val providers = listOf(
         // Provider Nikola (Nikola17/cloudstream-frenchstream) : recherche directe
         // sur french-stream.one + matching TMDB robuste, éprouvé sur de nombreuses
@@ -66,14 +73,14 @@ class FrenchHubCatalog : MainAPI() {
         // FS Mirror et les autres miroirs Datalife Engine du même site font partie
         // de ce même provider (bascule automatique de miroir si le domaine principal
         // tombe : french-stream.one, french-stream.pink, fstream.info).
-        Entry("frenchstream", "French-Stream", NikolaFrenchStreamProvider()),
-        Entry("movix", "Movix", MovixProvider()),
-        Entry("frenchmanga", "French-Manga", FrenchMangaProvider()),
-        Entry("moviebox", "MovieBox (VF)", MovieBoxProvider()),
+        Entry("frenchstream", "French-Stream", frenchStream),
+        Entry("movix", "Movix", movix),
+        Entry("frenchmanga", "French-Manga", frenchManga),
+        Entry("moviebox", "MovieBox", movieBox),
+        Entry("animesama", "Anime-Sama", animeSama),
     )
 
     private val providerByKey = providers.associateBy { it.key }
-    private val movix = providerByKey.getValue("movix").api as MovixProvider
 
     /**
      * This is intentionally a non-network URL. CloudStream uses mainUrl to decide
@@ -292,6 +299,13 @@ class FrenchHubCatalog : MainAPI() {
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
         val media = tryParseJson<FrenchHubMediaData>(data) ?: return false
+        // Les domaines sont modifiables depuis le menu de l'extension ; on les
+        // réapplique ici afin qu'un changement soit pris en compte sans recréer
+        // l'objet provider.
+        frenchStream.mainUrl = FrenchHubSettings.domain("frenchstream")
+        movix.mainUrl = FrenchHubSettings.domain("movix")
+        movieBox.mainUrl = FrenchHubSettings.domain("moviebox")
+        animeSama.mainUrl = FrenchHubSettings.domain("animesama")
         // Les sous-providers (FStream, Movix, Wiflix, …) partagent souvent les mêmes
         // liens finaux (vidzy, uqload, …). Il faut conserver UN lecteur par
         // (provider, URL) et non par URL seule, sinon le premier provider à émettre
