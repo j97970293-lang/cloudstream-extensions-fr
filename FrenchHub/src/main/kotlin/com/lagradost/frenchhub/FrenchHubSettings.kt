@@ -21,6 +21,7 @@ internal object FrenchHubSettings {
         ProviderSpec("movix", "Movix"),
         ProviderSpec("frenchmanga", "French-Manga"),
         ProviderSpec("moviebox", "MovieBox"),
+        ProviderSpec("nakastream", "NakaStream"),
     )
 
     val apiMainUrls = emptyMap<String, String>()
@@ -31,6 +32,7 @@ internal object FrenchHubSettings {
         DomainSpec("movix", "Movix API", "https://api.movix.fun"),
         DomainSpec("frenchmanga", "French-Manga", "https://w16.french-manga.net"),
         DomainSpec("moviebox", "MovieBox API", "https://h5-api.aoneroom.com"),
+        DomainSpec("nakastream", "NakaStream", "https://nakastream.tv"),
     )
 
     fun isEnabled(key: String): Boolean = getKey<Boolean>(PREFIX + key) ?: true

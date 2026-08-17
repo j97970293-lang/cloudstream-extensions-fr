@@ -31,6 +31,7 @@ import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.frenchhub.frenchmanga.FrenchMangaProvider
+import com.lagradost.frenchhub.nakastream.NakaStreamProvider
 import com.lagradost.nikola.NikolaFrenchStreamProvider
 import com.lagradost.frenchhub.movix.MovixProvider
 import com.lagradost.moviebox.MovieBoxProvider
@@ -64,6 +65,7 @@ class FrenchHubCatalog : MainAPI() {
     private val movix = MovixProvider()
     private val frenchManga = FrenchMangaProvider()
     private val movieBox = MovieBoxProvider()
+    private val nakaStream = NakaStreamProvider()
 
     private val providers = listOf(
         // Provider Nikola (Nikola17/cloudstream-frenchstream) : recherche directe
@@ -76,6 +78,7 @@ class FrenchHubCatalog : MainAPI() {
         Entry("movix", "Movix", movix),
         Entry("frenchmanga", "French-Manga", frenchManga),
         Entry("moviebox", "MovieBox", movieBox),
+        Entry("nakastream", "NakaStream", nakaStream),
     )
 
     private val providerByKey = providers.associateBy { it.key }
@@ -304,6 +307,7 @@ class FrenchHubCatalog : MainAPI() {
         movix.mainUrl = FrenchHubSettings.domain("movix")
         frenchManga.mainUrl = FrenchHubSettings.domain("frenchmanga")
         movieBox.mainUrl = FrenchHubSettings.domain("moviebox")
+        nakaStream.mainUrl = FrenchHubSettings.domain("nakastream")
         FrenchHubSettings.apiMainUrls.forEach { (key, url) ->
             providerByKey[key]?.api?.mainUrl = url
         }
@@ -313,11 +317,12 @@ class FrenchHubCatalog : MainAPI() {
         // masque tous les lecteurs des autres sources.
         val seenLinks = Collections.synchronizedSet(mutableSetOf<String>())
         val seenSubtitles = Collections.synchronizedSet(mutableSetOf<String>())
-        // Les mêmes vidéos sont souvent servies par plusieurs CDN (vidzy-1,
-        // vidzy-2, …) avec des URLs distinctes — le dédup par URL seule les
-        // laisse passer tous. On conserve donc aussi UN lecteur par fichier
-        // vidéo (hôte + chemin), toutes sources confondues.
+        // Les mêmes vidéos sont souvent servies par plusieurs miroirs/CDN avec
+        // des URL différentes. Une URL brute ne suffit donc pas : on conserve
+        // aussi une signature logique (source, libellé et qualité) afin d'éviter
+        // les listes répétées du type « VF 360p 360p ».
         val seenFiles = Collections.synchronizedSet(mutableSetOf<String>())
+        val seenMirrorLabels = Collections.synchronizedSet(mutableSetOf<String>())
         // Si tous les providers ont été désactivés (menu Providers), aucun lecteur
         // ne pourrait s'afficher : dans ce cas, réactiver la configuration par
         // défaut afin de ne jamais laisser l'utilisateur sans aucun lecteur.
@@ -359,7 +364,9 @@ class FrenchHubCatalog : MainAPI() {
                                                 ?.path
                                             "$host|$path"
                                         }
+                                    val mirrorKey = mirrorLabelKey(normalizedLink)
                                     if (seenFiles.add(pathKey) &&
+                                        seenMirrorLabels.add(mirrorKey) &&
                                         seenLinks.add("${entry.key}|${normalizedLink.url}")) callback(normalizedLink)
                                 },
                             )
@@ -497,6 +504,26 @@ class FrenchHubCatalog : MainAPI() {
             type = ExtractorLinkType.M3U8,
             audioTracks = link.audioTracks,
         )
+    }
+
+    /**
+     * Deux URL différentes peuvent pointer vers la même déclinaison servie par
+     * des miroirs tournants. Le lecteur voit alors une liste illisible de lignes
+     * identiques. La signature ci-dessous préserve les langues et les qualités
+     * distinctes tout en regroupant les copies ayant le même affichage.
+     */
+    private fun mirrorLabelKey(link: ExtractorLink): String {
+        fun clean(value: String): String = java.text.Normalizer
+            .normalize(value.lowercase(Locale.ROOT), java.text.Normalizer.Form.NFD)
+            .replace(Regex("""\p{M}+"""), "")
+            .replace(Regex("""\b(\d{3,4}p)(?:\s+\1)+\b"""), "${'$'}1")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+
+        val source = clean(link.source).ifBlank { "lecteur" }
+        val name = clean(link.name)
+        val quality = link.quality.coerceAtLeast(0)
+        return "$source|$name|$quality"
     }
 
     private fun titleTokens(value: String): List<String> {
