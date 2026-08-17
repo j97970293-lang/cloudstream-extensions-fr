@@ -3,294 +3,161 @@ package com.lagradost.frenchhub.animesama
 import com.lagradost.cloudstream3.DubStatus
 import com.lagradost.cloudstream3.Episode
 import com.lagradost.cloudstream3.ErrorLoadingException
-import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.MainAPI
-import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.SearchResponse
-import com.lagradost.cloudstream3.SeasonData
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
-import com.lagradost.cloudstream3.addDubStatus
 import com.lagradost.cloudstream3.addEpisodes
-import com.lagradost.cloudstream3.addSeasonNames
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.fixUrl
 import com.lagradost.cloudstream3.fixUrlNull
-import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.newAnimeLoadResponse
 import com.lagradost.cloudstream3.newAnimeSearchResponse
 import com.lagradost.cloudstream3.newEpisode
-import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import kotlin.text.RegexOption.DOT_MATCHES_ALL
+import com.lagradost.nikola.FrenchStreamTmdbClient
+import org.json.JSONObject
+import java.net.URLEncoder
+import java.text.Normalizer
+import java.util.Locale
 import kotlin.text.RegexOption.IGNORE_CASE
 
 /**
- * Anime-Sama (anime-sama.to) — catalogue d'anime VF/VOSTFR communautaire.
+ * Source Anime-Sama (anime-sama.to), réécrite sur le modèle qui fonctionne dans
+ * les extensions Nuvio (nuvio-french-providers / gowaru-nuvio-providers).
  *
- * Réécrit pour fonctionner comme French-Manga :
- * - Les panneaux panneauxAnime("Saison X", "slug") définissent les SAISONS RÉELLES
- *   (indexées +1) au lieu d'un aplatissement en season=1 (Wistoria S1 vs S2 distincts).
- * - Épisodes VF et VOSTFR séparés dans DubStatus.Dubbed / DubStatus.Subbed.
- * - Les liens sont émis avec le label de la langue ([VF] / [VOSTFR] / [VO]) et
- *   chaque embed est résolu par le chargeur d'extracteurs de CloudStream.
+ * Différence clé par rapport à la v17 : les épisodes ne sont plus cherchés en
+ * parsant la page HTML (le tag <script src="episodes.js"> a un contenu inline
+ * vide, ce qui cassait l'ancienne extraction). Les épisodes sont lus
+ * DIRECTEMENT depuis le fichier JavaScript du site :
  *
- * Fonctionnement du site :
- * - Recherche : POST /template-php/defaut/fetch.php avec body query=<titre>
- *   → HTML contenant des liens a (class asn-search-result, titre .asn-search-result-title)
- * - Fiche anime : /catalogue/<slug>/ avec panneauAnime("Nom", "saison1/vf") dans le
- *   script de #sousBlocMiddle ; /vostfr dans le slug indique une version VO.
- * - Épisodes : GET /catalogue/<slug>/<saison>/<lang>/episodes.js?filever=N
- *   → var eps1 = [...]; var eps2 = [...]; ... chaque var = un lecteur embed
+ *   https://anime-sama.to/catalogue/{slug}/saison{N}/{lang}/episodes.js
+ *
+ * avec des variantes de slugs construites depuis les titres TMDB
+ * (français + anglais + original + « Saison N »), exactement comme Nuvio :
+ * slug TMDB → slug-saison-N → slug-N → titres alternatifs → recherche du site.
+ * Les langues VF et VOSTFR sont cherchées pour chaque slug ; la VF est
+ * prioritaire dans la liste des lecteurs.
+ *
+ * Format du payload passé par le catalogue (directProviderData « animesama ») :
+ *   animesama://{tmdbId}::{type}::{season}::{episode}::{titre}
  */
 class AnimeSamaProvider : MainAPI() {
     override var mainUrl = "https://anime-sama.to"
     override var name = "Anime Sama"
-    override val hasQuickSearch = true
-    override val hasMainPage = true
     override var lang = "fr"
-    override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
-
-    override val mainPage = mainPageOf(
-        "#containerAjoutsAnimes a" to "Derniers épisodes ajoutés",
-        "#containerSorties a" to "Derniers contenus sortis",
-        "#containerClassiques a" to "Les classiques",
-        "#containerPepites a" to "Découvrez des pépites",
-    )
+    override val hasMainPage = false
+    override val hasQuickSearch = true
+    override val supportedTypes = setOf(TvType.Anime)
 
     private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     private val browserHeaders = mapOf("User-Agent" to userAgent)
 
-    private val searchResultRegex = Regex(
-        """<a[^>]+href="([^"]+)"[^>]*class="asn-search-result"[^>]*>.*?<img[^>]+src="([^"]+)"[^>]*>.*?<h3[^>]*>([^<]+)""",
-        setOf(DOT_MATCHES_ALL, IGNORE_CASE)
-    )
+    /** Var → liste des URLs embed, exactement comme parseUrls de Nuvio. */
+    private val varRegex = Regex("""var\s+([a-z0-9]+)\s*=\s*\[([\s\S]*?)\s*\];""")
+    private val quotedRegex = Regex("""['"]([^'"]+)['"]""")
 
-    private val panelRegex = Regex("""panneauAnime\("([^"]+)",\s*"([^"]+)"\);""")
+    override suspend fun search(query: String): List<SearchResponse> = emptyList()
 
-    private val episodesScriptRegex = Regex(
-        """<script[^>]*src=['"]([^'"]*episodes\.js\?filever=\d+)['"][^>]*>""",
-        IGNORE_CASE
-    )
+    /**
+     * Charge un film ou une série : les lecteurs sont émis ici via loadLinks ;
+     * la fiche est construite à partir de TMDB (titre, affiche, résumé).
+     */
+    override suspend fun load(url: String): LoadResponse {
+        val parts = url.removePrefix("animesama://").split("::")
+        val tmdbId = parts.getOrNull(0)?.toIntOrNull()
+            ?: throw ErrorLoadingException("Identifiant TMDB manquant pour Anime-Sama")
+        val type = parts.getOrNull(1) ?: "tv"
+        val season = parts.getOrNull(2)?.toIntOrNull()
+        val episode = parts.getOrNull(3)?.toIntOrNull()
+        val title = parts.getOrNull(4)?.takeIf(String::isNotBlank) ?: "Anime"
 
-    private val episodesRegex = Regex("""var\s+eps(\d+)\s*=\s*\[([\s\S]*?)\];""")
+        val tmdb = FrenchStreamTmdbClient.details(title, null, type == "tv")
+        val isSeries = type == "tv"
 
-    private val stringLiteralRegex = Regex("""["']([^"']+)["']""")
+        // La réponse TMDB arrive en language=fr-FR : title/name = titre
+        // français, original_title/original_name = titre original (souvent
+        // anglais), poster = affiche localisée ou originale.
+        val titleFr = tmdb?.let {
+            (it.optString("name").ifBlank { it.optString("title") }).takeIf(String::isNotBlank)
+        } ?: title
+        val titleOriginal = tmdb?.let {
+            (it.optString("original_name").ifBlank { it.optString("original_title") })
+                .takeIf(String::isNotBlank)
+        }
+        // Nuvio cherche aussi le titre anglais « officiel » : la recherche TMDB
+        // (find, language=fr-FR) retourne souvent le titre original dans le
+        // champ title quand aucune traduction française n'existe — on l'utilise
+        // comme variante complémentaire.
+        val titleEn = FrenchStreamTmdbClient.find(title, null, isSeries)?.let {
+            (it.optString("name").ifBlank { it.optString("title") }).takeIf(String::isNotBlank)
+        }?.takeIf { it != titleFr && it != titleOriginal }
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val doc = runCatching { app.get(mainUrl, headers = browserHeaders).document }.getOrNull()
-            ?: return newHomePageResponse(request.name, emptyList(), hasNext = false)
-        val items = doc.select(request.data).mapNotNull { anchor ->
-            val title = anchor.selectFirst(".card-title")?.text()?.trim()
-                ?: anchor.attr("title").trim().takeIf { it.isNotBlank() }
-                ?: return@mapNotNull null
-            val href = fixUrl(anchor.attr("href"))
-            val poster = fixUrlNull(anchor.selectFirst("img")?.attr("src"))
-                    newAnimeSearchResponse(title, href, TvType.Anime) {
-                        this.posterUrl = poster
-                        addDubStatus(dubExist = true, subExist = true)
+        // Les saisons réelles sont celles détectées par TMDB (title + « Saison N »),
+        // pas les panneaux HTML : le catalogue TMDB fait foi, comme Nuvio.
+        val seasonCount = tmdb?.let { details ->
+            details.optJSONArray("seasons")?.let { seasons ->
+                (0 until seasons.length()).mapNotNull { i ->
+                    seasons.optJSONObject(i)?.optInt("season_number", 0)?.takeIf { n -> n > 0 }
+                }.maxOrNull()?.takeIf { max -> max > 0 } ?: 1
+            } ?: 1
+        } ?: 1
+
+        val dubbedEpisodes = mutableListOf<Episode>()
+        val subbedEpisodes = mutableListOf<Episode>()
+        var foundAny = false
+
+        for (s in 1..seasonCount) {
+            val seasonData = runCatching {
+                AnimeSamaSeasonData(tmdbId, titleFr, titleEn.orEmpty(), titleOriginal.orEmpty(), isSeries, s)
+            }.getOrNull() ?: continue
+            val seasonEpisodes = seasonData.resolveLinks(episode)
+            if (seasonEpisodes.vf.isEmpty() && seasonEpisodes.vostfr.isEmpty()) continue
+            foundAny = true
+
+            for (ep in 1..maxOf(seasonEpisodes.total, 1)) {
+                val vfData = seasonEpisodes.vf.getOrNull(ep - 1)?.joinToString(" ").orEmpty()
+                val vostfrData = seasonEpisodes.vostfr.getOrNull(ep - 1)?.joinToString(" ").orEmpty()
+                val epName = if (seasonCount == 1 && !isSeries) {
+                    titleFr
+                } else {
+                    "$titleFr - Saison $s Épisode ${ep.toString().padStart(2, '0')}"
+                }
+                if (vfData.isNotBlank()) {
+                    dubbedEpisodes += newEpisode(vfData) {
+                        this.name = "$epName [VF]"
+                        this.season = s
+                        this.episode = ep
                     }
-        }.distinctBy { it.name }
-        return newHomePageResponse(request.name, items, hasNext = false)
-    }
-
-    override suspend fun search(query: String): List<SearchResponse> {
-        if (query.isBlank()) return emptyList()
-        // La recherche anime-sama fonctionne avec le titre seul OU le titre
-        // suivi de la saison : « Wistoria Saison 1 », « Wistoria Saison 2 »,
-        // « Wistoria » retournent des fiches différentes. On cherche les deux
-        // variantes comme le fait French-Manga (discoverSeasons fallback).
-        val results = linkedMapOf<String, SearchResponse>()
-        listOf(query, "$query Saison 1", "$query Saison 2").forEach { candidate ->
-            runCatching {
-                val response = app.post(
-                    "$mainUrl/template-php/defaut/fetch.php",
-                    data = mapOf("query" to candidate),
-                    headers = browserHeaders,
-                    referer = "$mainUrl/",
-                    timeout = 10L
-                )
-                val doc = response.document
-                doc.select("a").forEach { anchor ->
-                    val title = anchor.selectFirst(".asn-search-result-title")?.text()?.trim()
-                        ?: return@forEach
-                    val href = fixUrl(anchor.attr("href"))
-                    if (title.isBlank() || href.isBlank()) return@forEach
-                    val poster = fixUrlNull(anchor.selectFirst("img")?.attr("src"))
-                    results[title] = newAnimeSearchResponse(title, href, TvType.Anime) {
-                        this.posterUrl = poster
-                        addDubStatus(dubExist = true, subExist = true)
+                }
+                if (vostfrData.isNotBlank()) {
+                    subbedEpisodes += newEpisode(vostfrData) {
+                        this.name = "$epName [VOSTFR]"
+                        this.season = s
+                        this.episode = ep
                     }
                 }
             }
         }
-        return results.values.toList()
-    }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse> = search(query).take(20)
-
-    override suspend fun load(url: String): LoadResponse {
-        val doc = app.get(url, headers = browserHeaders, timeout = 12L).document
-        val title = doc.selectFirst("#titreOeuvre")?.text()?.trim()?.takeIf { it.isNotBlank() }
-            ?: Regex("""<title[^>]*>([^<]+)""").find(doc.html())?.groupValues?.getOrNull(1)
-                ?.substringBefore("| Anime-Sama")?.trim()?.ifBlank { "Anime" } ?: "Anime"
-
-        // 1. Panneaux = saisons réelles, exactement comme le provider CuxPlug :
-        //    panneauAnime("Saison 1", "saison1/vf") → season 1, etc.
-        val rawSeasonScript = doc.selectFirst("#sousBlocMiddle script")?.toString() ?: ""
-        val panneaux = panelRegex.findAll(rawSeasonScript).map {
-            Panel(it.groupValues[1].trim(), it.groupValues[2].trim().trimEnd('/'))
-        }.toList()
-
-        if (panneaux.isEmpty()) {
-            throw ErrorLoadingException("Aucune saison ou langue disponible sur Anime-Sama")
+        if (!foundAny && dubbedEpisodes.isEmpty() && subbedEpisodes.isEmpty()) {
+            throw ErrorLoadingException("Aucun épisode trouvé sur Anime-Sama")
         }
 
-        val seasonData = panneaux.mapIndexed { index, panel ->
-            SeasonData(index + 1, panel.name)
-        }
-        val seasonByName = panneaux.map { it.name }.toList()
-
-        // 2. Pour chaque panneau, extraire les liens VF (doublés) et VO (sous-titrés).
-        //    Un panneau dont le slug finit par /vf est déjà doublé ; sinon on
-        //    tente la page /vostfr puis la page vf comme fallback.
-        val seasonPages = coroutineScope {
-            panneaux.mapIndexed { index, panel ->
-                async {
-                    runCatching {
-                        val pageUrl = "$url/${panel.path}"
-                        val isVFPage = pageUrl.removeSuffix("/").endsWith("/vf")
-                        val vfLinks = if (isVFPage) {
-                            extractStreamLinks(pageUrl)
-                        } else {
-                            extractStreamLinks(pageUrl.replaceFirst("$url/${panel.path}", "$url/${panel.path}/vf"))
-                                .takeIf { it.isNotEmpty() }
-                                ?: extractStreamLinks(pageUrl)
-                        }
-                        val voLinks = if (!isVFPage) extractStreamLinks(pageUrl) else emptyMap()
-                        val maxEpisodes = maxOf(
-                            vfLinks.values.maxOfOrNull { it.size } ?: 0,
-                            voLinks.values.maxOfOrNull { it.size } ?: 0,
-                        )
-                        SeasonPage(index + 1, pageUrl, maxEpisodes, vfLinks, voLinks)
-                    }.getOrNull()
-                }
-            }.awaitAll().filterNotNull()
-        }
-
-        if (seasonPages.isEmpty()) {
-            throw ErrorLoadingException("Aucune saison exploitable sur Anime-Sama")
-        }
-
-        val isMovie = seasonPages.size == 1 &&
-            seasonPages.first().maxEpisodes == 1 &&
-            "film" in panneaux.first().name.lowercase()
-
-        val (dubbedEpisodes, subbedEpisodes) = buildSeasonEpisodes(seasonPages, title, isMovie, seasonByName)
-
-        return newAnimeLoadResponse(title, url, TvType.Anime) {
-            posterUrl = doc.selectFirst("#coverOeuvre")?.attr("src")
-                ?: doc.selectFirst("img[src*='thumb'], img")?.attr("src")
-                ?.let { fixUrl(it) }
-            plot = doc.selectFirst("p.text-sm.text-gray-400.mt-2")?.text()
-            tags = doc.selectFirst("a.text-sm.text-gray-300.mt-2")?.text()
-                ?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
-            addSeasonNames(seasonData)
+        return newAnimeLoadResponse(titleFr, url, TvType.Anime) {
+            this.posterUrl = FrenchStreamTmdbClient.image(
+                tmdb?.optString("poster_path")
+                    ?: FrenchStreamTmdbClient.find(title, null, isSeries)?.optString("poster_path"),
+            )
+            this.plot = tmdb?.optString("overview")
+            // addDubStatus n'est disponible que sur AnimeSearchResponse ; la
+            // présence de VF/VOSTFR est exprimée par les sections Dubbed/Subbed.
             if (dubbedEpisodes.isNotEmpty()) addEpisodes(DubStatus.Dubbed, dubbedEpisodes)
             if (subbedEpisodes.isNotEmpty()) addEpisodes(DubStatus.Subbed, subbedEpisodes)
-            if (dubbedEpisodes.isEmpty() && subbedEpisodes.isEmpty()) {
-                throw ErrorLoadingException("Aucun épisode disponible sur Anime-Sama")
-            }
-        }
-    }
-
-    private fun buildSeasonEpisodes(
-        seasons: List<SeasonPage>,
-        title: String,
-        isMovie: Boolean,
-        seasonByName: List<String>
-    ): Pair<List<Episode>, List<Episode>> {
-        val dubbed = mutableListOf<Episode>()
-        val subbed = mutableListOf<Episode>()
-        seasons.forEachIndexed { seasonIndex, seasonPage ->
-            val seasonLabel = seasonPage.number
-            val seasonName = seasonByName.getOrNull(seasonIndex)?.trim() ?: ""
-            for (ep in 1..seasonPage.maxEpisodes) {
-                val name = when {
-                    isMovie -> title
-                    "film" in seasonName.lowercase() -> "$title - Film"
-                    "saison" in seasonName.lowercase() -> "$title - Saison $seasonLabel Épisode ${ep.toString().padStart(2, '0')}"
-                    else -> "$title $seasonName - Épisode $ep"
-                }
-                val vfData = seasonPage.vfLinks.values.mapIndexedNotNull { index, links ->
-                    links.getOrNull(ep - 1)?.takeIf { it.isNotBlank() }
-                }.joinToString(" ")
-                val voData = seasonPage.voLinks.values.mapIndexedNotNull { index, links ->
-                    links.getOrNull(ep - 1)?.takeIf { it.isNotBlank() }
-                }.joinToString(" ")
-                if (vfData.isNotBlank()) {
-                    dubbed += newEpisode(vfData) {
-                        this.name = name
-                        this.season = seasonLabel
-                        this.episode = ep
-                    }
-                }
-                if (voData.isNotBlank()) {
-                    subbed += newEpisode(voData) {
-                        this.name = name
-                        this.season = seasonLabel
-                        this.episode = ep
-                    }
-                }
-            }
-        }
-        return dubbed to subbed
-    }
-
-    private suspend fun extractStreamLinks(pageUrl: String): Map<String, List<String>> {
-        val response = runCatching {
-            app.get(pageUrl, headers = browserHeaders, referer = "$mainUrl/", timeout = 12L)
-        }.getOrNull() ?: return emptyMap()
-        val doc = response.document
-        // Le site charge episodes.js via un tag <script src='episodes.js?filever=N'>
-        // dont le contenu inline est vide : chercher la référence dans le
-        // document ENTIER (et pas seulement dans le premier script inline
-        // de #sousBlocMiddle, comme faisait la v16 qui ne trouvait donc
-        // jamais rien). Le src est relatif à la page de saison.
-        val episodeScriptPath = episodesScriptRegex.find(doc.html())?.groupValues?.getOrNull(1)
-            ?: return emptyMap()
-        val resolvedScript = if (episodeScriptPath.startsWith("http", true)) {
-            episodeScriptPath
-        } else {
-            "$pageUrl/${episodeScriptPath.trimStart('/')}"
-        }
-        val episodeScript = runCatching {
-            app.get(resolvedScript, headers = browserHeaders, referer = pageUrl, timeout = 12L).text
-        }.getOrNull() ?: return emptyMap()
-        val urls = episodesRegex.findAll(episodeScript).flatMap { match ->
-            stringLiteralRegex.findAll(match.groupValues[2])
-                .map { it.groupValues[1] }
-                .filter { it.startsWith("http", true) || it.startsWith("/") }
-                .map { fixUrl(it) }
-        }.distinct().toList()
-        if (urls.isEmpty()) return emptyMap()
-        return urls.groupBy { url ->
-            when {
-                url.contains("sibnet.ru") -> "Sibnet"
-                url.contains("embed4me.com") -> "Embed4Me"
-                url.contains("vidmoly") -> "Vidmoly"
-                url.contains("oneupload") -> "Oneupload"
-                url.contains("sendvid") -> "Sendvid"
-                url.contains("vk.com") -> "Vk"
-                else -> "Autre"
-            }
         }
     }
 
@@ -298,66 +165,278 @@ class AnimeSamaProvider : MainAPI() {
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
+        callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        // data = liens séparés par des espaces (VO ou VF) + un préfixe de langue
-        // éventuel « [VF] ... ». Le catalogue encode la langue dans le nom des
-        // épisodes : ici on émet chaque embed en laissant le nom du serveur.
-        val links = data.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        // data : « {url}::{epIndex}::{lang} » — les liens sont indexés dans
+        // load() et stockés ici par épisode ; on émet chaque embed via les
+        // extracteurs CloudStream (sibnet, vidmoly, sendvid, voe, …).
+        val parts = data.split("::")
+        val links = parts.getOrNull(0)?.split(Regex("\\s+"))?.filter(String::isNotBlank).orEmpty()
         if (links.isEmpty()) return false
         var emitted = false
         for (link in links) {
-            var resolved = false
             for (candidate in linkCandidates(link)) {
                 if (loadExtractor(candidate, subtitleCallback) { extracted ->
                         emitted = true
                         callback(extracted)
                     }) {
-                    resolved = true
                     break
                 }
             }
-            if (!resolved) {
-                // Fallback : émettre le lien embed directement pour que le
-                // lecteur apparaisse même si aucun extracteur interne ne le résout.
-                callback(
-                    ExtractorLink(
-                        source = "Anime-Sama",
-                        name = "Anime-Sama (embed)",
-                        url = link,
-                        referer = "$mainUrl/",
-                        quality = Qualities.Unknown.value,
-                        headers = mapOf(
-                            "Referer" to "$mainUrl/",
-                            "User-Agent" to userAgent,
-                        ),
-                        type = ExtractorLinkType.M3U8,
-                    )
-                )
-                emitted = true
-            }
+        }
+        if (!emitted) {
+            // Fallback : émettre l'embed brut (M3U8/MP4) pour que le lecteur
+            // apparaisse même si aucun extracteur interne ne le résout.
+            val last = links.last()
+            callback(
+                ExtractorLink(
+                    source = "Anime-Sama",
+                    name = "Anime-Sama (embed)",
+                    url = last,
+                    referer = "$mainUrl/",
+                    quality = Qualities.Unknown.value,
+                    headers = mapOf("Referer" to "$mainUrl/", "User-Agent" to userAgent),
+                    type = when {
+                        last.contains(".m3u8", true) -> ExtractorLinkType.M3U8
+                        last.contains(".mp4", true) || last.contains("sibnet") -> ExtractorLinkType.VIDEO
+                        last.contains(".mpd", true) -> ExtractorLinkType.DASH
+                        else -> ExtractorLinkType.M3U8
+                    },
+                ),
+            )
+            emitted = true
         }
         return emitted
     }
 
-    private fun linkCandidates(url: String): List<String> {
+    private fun linkCandidates(url: String): List<String> = buildList {
+        add(url)
         val lower = url.lowercase()
-        return buildList {
-            add(url)
-            if ("vidmoly" in lower) {
-                add(url.replace("vidmoly.to", "vidmoly.me"))
-                add(url.replace("vidmoly.biz", "vidmoly.me"))
+        if ("vidmoly" in lower) {
+            for (tld in listOf("me", "net", "to", "ru", "biz")) {
+                add(url.replace(Regex("""vidmoly\.[a-z]+"""), "vidmoly.$tld"))
             }
-        }.distinct()
+        }
+        if ("streamtape" in lower || "stape" in lower) {
+            add(url.replace(Regex("""(stream)?tape\.[a-z]+"""), "streamtape.com"))
+        }
+    }.distinct()
+
+    /** Titres à essayer comme slug, dans l'ordre Nuvio : FR, EN, original, variantes Saison. */
+    private fun candidateTitles(titleFr: String, titleEn: String, titleOriginal: String, season: Int): List<String> {
+        val seen = linkedSetOf<String>()
+        val add = { t: String -> if (t.isNotBlank()) seen.add(t) }
+        add(titleFr)
+        add(titleEn)
+        titleOriginal?.takeIf { it != titleEn && it != titleFr }?.let(add)
+        if (season > 0) {
+            add("$titleFr Saison $season")
+            add("$titleEn Season $season")
+            add("$titleEn S$season")
+        }
+        return seen.toList()
     }
 
-    private data class Panel(val name: String, val path: String)
+    /** slug friendly identique à toSlug de Nuvio (NFD sans accents, tirets). */
+    private fun toSlug(title: String): String = Normalizer
+        .normalize(title.lowercase(Locale.ROOT), Normalizer.Form.NFD)
+        .replace(Regex("""\p{M}+"""), "")
+        .replace(Regex("""[':!.,?()\[\]/–—"]"""), " ")
+        .replace(Regex("""[^a-z0-9]+"""), "-")
+        .replace(Regex("""-+"""), "-")
+        .trim('-')
 
-    private data class SeasonPage(
-        val number: Int,
-        val pageUrl: String,
-        val maxEpisodes: Int,
-        val vfLinks: Map<String, List<String>>,
-        val voLinks: Map<String, List<String>>,
-    )
+    /** Clé de comparaison normalisée (pour le matching de la recherche). */
+    private fun titleKey(title: String): String = Normalizer
+        .normalize(title.lowercase(Locale.ROOT), Normalizer.Form.NFD)
+        .replace(Regex("""\p{M}+"""), "")
+        .replace(Regex("""[^a-z0-9]+"""), "")
+
+    private inner class AnimeSamaSeasonData(
+        private val tmdbId: Int,
+        private val titleFr: String,
+        private val titleEn: String,
+        private val titleOriginal: String,
+        private val isSeries: Boolean,
+        private val season: Int,
+    ) {
+        /** Ordre des essais : slug TMDB, root sans saison, slug-saison-N, slug-N,
+         *  titres alternatifs TMDB, puis recherche du site — comme Nuvio. */
+        suspend fun resolveLinks(episode: Int?): SeasonEpisodes {
+            val languages = listOf("vostfr", "vf")
+            val slugs = linkedSetOf<String>()
+            for (title in candidateTitles(titleFr, titleEn, titleOriginal, season)) {
+                slugs.add(toSlug(title))
+                if (season > 1) slugs.add("${toSlug(title)}-saison-$season")
+                if (season > 1) slugs.add("${toSlug(title)}-$season")
+            }
+            if (slugs.size > 5) slugs.take(5).also { slugs.clear(); slugs.addAll(it) }
+
+            // 1. Slugs directs : chaque (slug, lang) → episodes.js.
+            for (slug in slugs) {
+                val vf = linkedMapOf<String, List<String>>()
+                val vostfr = linkedMapOf<String, List<String>>()
+                for (lang in languages) {
+                    val parsed = fetchEpisodeVars(slug, season, lang)
+                    if (parsed.isNotEmpty()) {
+                        val streams = parseStreams(parsed, episode)
+                        if (lang == "vf") vf.putAll(streams) else vostfr.putAll(streams)
+                    }
+                }
+                // Root path (sans préfixe de saison) — utile si tout est dans un seul fichier.
+                for (lang in languages) {
+                    val parsed = fetchRootVars(slug, lang)
+                    if (parsed.isNotEmpty()) {
+                        val streams = parseStreams(parsed, episode)
+                        if (lang == "vf") vf.putAll(streams) else vostfr.putAll(streams)
+                    }
+                }
+                if (vf.isNotEmpty() || vostfr.isNotEmpty()) {
+                    return SeasonEpisodes(vf.values.toList(), vostfr.values.toList())
+                }
+            }
+
+            // 2. Recherche du site : fetch.php, scoring NFD, 2 meilleurs slugs.
+            for (title in candidateTitles(titleFr, titleEn, titleOriginal, 0).take(2)) {
+                val found = runCatching { searchSiteSlugs(title) }.getOrNull().orEmpty()
+                for (slug in found) {
+                    val vf = linkedMapOf<String, List<String>>()
+                    val vostfr = linkedMapOf<String, List<String>>()
+                    for (lang in languages) {
+                        val parsed = fetchEpisodeVars(slug, season, lang)
+                            .ifEmpty { fetchRootVars(slug, lang) }
+                        if (parsed.isNotEmpty()) {
+                            val streams = parseStreams(parsed, episode)
+                            if (lang == "vf") vf.putAll(streams) else vostfr.putAll(streams)
+                        }
+                    }
+                    if (vf.isNotEmpty() || vostfr.isNotEmpty()) {
+                        return SeasonEpisodes(vf.values.toList(), vostfr.values.toList())
+                    }
+                }
+            }
+            return SeasonEpisodes(emptyList(), emptyList())
+        }
+
+        /** `var X = [...]` dans episodes.js (toutes les vars, comme Nuvio). */
+        private fun parseStreams(vars: List<Pair<String, List<String>>>, episode: Int?): Map<String, List<String>> {
+            val result = linkedMapOf<String, List<String>>()
+            vars.forEachIndexed { index, (varName, urls) ->
+                val player = playerFor(varName, urls.firstOrNull().orEmpty())
+                val picked = when {
+                    episode == null -> urls.firstOrNull()?.takeIf(String::isNotBlank)?.let { listOf(it) } ?: emptyList()
+                    episode in 1..urls.size -> listOf(urls[episode - 1])
+                    else -> emptyList()
+                }
+                if (picked.isNotEmpty()) {
+                    result["$player|${picked.joinToString(" ")}"] = picked
+                }
+            }
+            return result
+        }
+
+        private fun playerFor(varName: String, url: String): String = when {
+            "sibnet" in url -> "Sibnet"
+            "vidmoly" in url -> "Vidmoly"
+            "sendvid" in url -> "Sendvid"
+            "voe" in url -> "Voe"
+            "streamtape" in url || "stape" in url -> "Streamtape"
+            "dood" in url -> "Doodstream"
+            "uqload" in url || "oneupload" in url -> "Uqload"
+            else -> varName.replaceFirstChar { it.uppercase() }
+        }
+    }
+
+    private suspend fun fetchEpisodeVars(slug: String, season: Int, lang: String): List<Pair<String, List<String>>> {
+        val path = if (season > 0) "saison$season" else ""
+        val url = "$mainUrl/catalogue/$slug/${if (path.isNotBlank()) "$path/" else ""}$lang/episodes.js"
+        return runCatching {
+            val text = app.get(url, headers = browserHeaders, referer = "$mainUrl/", timeout = 10L).text
+            parseVars(text)
+        }.getOrNull() ?: emptyList()
+    }
+
+    private suspend fun fetchRootVars(slug: String, lang: String): List<Pair<String, List<String>>> {
+        val url = "$mainUrl/catalogue/$slug/$lang/episodes.js"
+        return runCatching {
+            val text = app.get(url, headers = browserHeaders, referer = "$mainUrl/", timeout = 10L).text
+            parseVars(text)
+        }.getOrNull() ?: emptyList()
+    }
+
+    private fun parseVars(text: String): List<Pair<String, List<String>>> =
+        varRegex.findAll(text).mapNotNull { match ->
+            val varName = match.groupValues[1]
+            val urls = quotedRegex.findAll(match.groupValues[2])
+                .map { it.groupValues[1] }
+                .filter { it.startsWith("http", true) || it.startsWith("//") }
+                .map { if (it.startsWith("//")) "https:$it" else it }
+                .distinct()
+                .toList()
+            if (urls.isEmpty()) null else varName to urls
+        }.toList()
+
+    /** Recherche fetch.php avec scoring NFD, retourne les 2 meilleurs slugs. */
+    private suspend fun searchSiteSlugs(query: String): List<String> {
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        val html = runCatching {
+            app.post(
+                "$mainUrl/template-php/defaut/fetch.php",
+                data = mapOf("query" to query),
+                headers = browserHeaders,
+                referer = "$mainUrl/",
+                timeout = 10L,
+            ).text
+        }.getOrNull() ?: return emptyList()
+
+        val results = mutableListOf<Pair<String, Int>>()
+        val seen = mutableSetOf<String>()
+        Regex("""href="([^"]*/catalogue/([^/]+)/?)"[^>]*>[\s\S]*?asn-search-result-title[^>]*>([^<]+)""").findAll(html).forEach { match ->
+            val slug = match.groupValues[2]
+            if (slug in seen) return@forEach
+            seen.add(slug)
+            val title = match.groupValues[3].trim()
+            val score = scoreSearchResult(title, query)
+            if (score > 0) results += slug to score
+        }
+        // Les anchors peuvent être dans l'autre ordre (title avant href) : scan plus laxiste.
+        if (results.isEmpty()) {
+            Regex("""asn-search-result-title[^>]*>([^<]+)[\s\S]{0,300}?href="[^"]*/catalogue/([^/]+)/""" , IGNORE_CASE).findAll(html).forEach { match ->
+                val title = match.groupValues[1].trim()
+                val slug = match.groupValues[2]
+                if (slug in seen) return@forEach
+                seen.add(slug)
+                val score = scoreSearchResult(title, query)
+                if (score > 0) results += slug to score
+            }
+        }
+        return results.sortedByDescending { it.second }.take(2).map { it.first }
+    }
+
+    /** Scoring identique à Nuvio (NFD, mots > 2 lettres). */
+    private fun scoreSearchResult(resultTitle: String, query: String): Int {
+        val q = titleKey(query)
+        val t = titleKey(resultTitle)
+        if (q.isEmpty() || t.isEmpty()) return 0
+        var score = 0
+        when {
+            t == q -> return 100
+            t.contains(q) -> score += 60
+            q.contains(t) -> score += 50
+        }
+        val qWords = q.split(Regex("""[a-z0-9]+""")).filter { it.length > 2 }
+        val tWords = t.split(Regex("""[a-z0-9]+""")).filter { it.length > 2 }
+        score += qWords.count { it in tWords } * 15
+        return score
+    }
+
+    private data class SeasonEpisodes(
+        val vf: List<List<String>>,
+        val vostfr: List<List<String>>,
+    ) {
+        val total: Int get() = maxOf(
+            vf.maxOfOrNull { it.size } ?: 0,
+            vostfr.maxOfOrNull { it.size } ?: 0,
+        )
+    }
 }

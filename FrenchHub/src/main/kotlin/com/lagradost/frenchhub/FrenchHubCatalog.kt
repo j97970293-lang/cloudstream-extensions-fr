@@ -361,6 +361,8 @@ class FrenchHubCatalog : MainAPI() {
                 val subjectTitle = media.title
                 val parts = buildString {
                     append("moviebox://")
+                    append(media.tmdbId)
+                    append("::")
                     append(if (media.type == "movie") "movie" else "tv")
                     append("::")
                     append(subjectTitle)
@@ -372,6 +374,24 @@ class FrenchHubCatalog : MainAPI() {
                     }
                 }
                 parts
+            }
+            "animesama" -> {
+                if (media.tmdbId == null) null
+                else {
+                    val parts = buildString {
+                        append("animesama://")
+                        append(media.tmdbId)
+                        append("::")
+                        append(if (media.type == "movie") "movie" else "tv")
+                        append("::")
+                        append(media.season ?: 1)
+                        append("::")
+                        append(media.episode ?: 1)
+                        append("::")
+                        append(media.title)
+                    }
+                    parts
+                }
             }
             "movix" -> {
                 val base = movix.mainUrl.trimEnd('/')

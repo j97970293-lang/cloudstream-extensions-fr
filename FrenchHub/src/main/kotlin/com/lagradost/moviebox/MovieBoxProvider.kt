@@ -58,40 +58,37 @@ class MovieBoxProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        // data : « moviebox://{type}::{title} » (type = movie|tv)
+        // data : « moviebox://{tmdbId}::{type}::{title} » (type = movie|tv)
         val parts = data.removePrefix("moviebox://").split("::")
-        val type = parts.getOrNull(0) ?: return false
-        val title = parts.getOrNull(1)?.takeIf(String::isNotBlank) ?: return false
-        val season = parts.getOrNull(2)?.toIntOrNull()
-        val episode = parts.getOrNull(3)?.toIntOrNull()
+        val type = parts.getOrNull(1) ?: return false
+        val title = parts.getOrNull(2)?.takeIf(String::isNotBlank) ?: return false
+        val season = parts.getOrNull(3)?.toIntOrNull()
+        val episode = parts.getOrNull(4)?.toIntOrNull()
         val isSeries = type == "tv"
 
         val token = fetchToken() ?: return false
         val headers = baseHeaders(token)
 
-        // Identifiant commun TMDB/TMBV : le titre français ET le titre original
-        // (originalTitle) sont recherchés comme Nikola, afin de couvrir les
-        // fiches indexées sous le titre anglais alors que le catalogue TMDB
-        // demande le titre français (et inversement).
+        // Identifiant commun TMDB/TMBV : le titre TMDB est résolu par son ID
+        // (comme Nikola), avec le titre français ET le titre original afin de
+        // couvrir les fiches indexées sous le titre anglais alors que le
+        // catalogue TMDB demande le titre français (et inversement).
         val tmdbQuery = runCatching {
             FrenchStreamTmdbClient.find(title, null, isSeries)
+        }.getOrNull() ?: runCatching {
+            FrenchStreamTmdbClient.details(title, null, isSeries)
         }.getOrNull()
-        val originalTitle = tmdbQuery?.optString("original_title")
-            ?: tmdbQuery?.optString("original_name")
-        val tmdbTitles = linkedSetOf(title).apply {
+        val originalTitle = tmdbQuery?.let {
+            (it.optString("original_title").ifBlank { it.optString("original_name") })
+                .takeIf(String::isNotBlank)
+        }
+        val titleEn = tmdbQuery?.let {
+            (it.optString("title").ifBlank { it.optString("name") }).takeIf(String::isNotBlank)
+        }
+        val tmdbTitles = linkedSetOf<String>().apply {
             originalTitle?.takeIf(String::isNotBlank)?.let { add(it) }
-        }.toMutableSet()
-        // Le titre TMDB « original_title » est souvent plus proche du titre
-        // indexé par MovieBox (qui indexe les titres anglais) : on le place
-        // en tête des recherches.
-        if (!originalTitle.isNullOrBlank() && originalTitle != title) {
-            tmdbTitles.remove(title)
-            val reordered = linkedSetOf<String>().apply {
-                add(originalTitle)
-                addAll(tmdbTitles)
-            }
-            tmdbTitles.clear()
-            tmdbTitles.addAll(reordered)
+            titleEn?.takeIf(String::isNotBlank)?.let { add(it) }
+            add(title)
         }
 
         // Variantes de langue recherchées pour chaque titre TMDB.
@@ -111,9 +108,15 @@ class MovieBoxProvider : MainAPI() {
             fetchSubjects(keyword, subjectType, headers)?.let { subjectsById.putAll(it) }
         }
 
-        // 2. Secours : recherche générique avec le premier mot du titre
-        // (l'API indexe parfois sous un titre très différent ou ne répond
-        // que partiellement). Les deux premiers mots suffisent.
+        // 2. Secours : recherche sur le premier mot du titre puis recherche
+        // générique (l'API indexe parfois sous un titre très différent ou ne
+        // répond que partiellement).
+        if (subjectsById.isEmpty()) {
+            val firstWord = title.split(Regex("""\s+""")).firstOrNull()?.takeIf { it.length > 2 }
+            if (firstWord != null && firstWord != title) {
+                fetchSubjects(firstWord, null, headers)?.let { subjectsById.putAll(it) }
+            }
+        }
         if (subjectsById.isEmpty()) {
             val shortKeyword = title.split(Regex("""\s+"""))
                 .filter { it.length > 2 }
@@ -176,16 +179,20 @@ class MovieBoxProvider : MainAPI() {
                 }.getOrNull() ?: JSONObject()
 
                 val displayName = buildName(language)
-                val addedQualities = mutableSetOf<Int>()
+                val emittedUrls = mutableSetOf<String>()
 
                 downloadObj.optJSONArray("downloads")?.let { array ->
                     (0 until array.length()).mapNotNull { array.optJSONObject(it) }.forEach { download ->
                         val url = download.optString("url").takeIf(String::isNotBlank) ?: return@forEach
                         if (download.optBoolean("vipLocked", false)) return@forEach
                         val resolution = download.optInt("resolution")
-                        if (addedQualities.add(resolution)) {
+                        if (emittedUrls.add(url)) {
                             callback.invoke(
-                                newExtractorLink(displayName, displayName, url) {
+                                newExtractorLink(
+                                    displayName,
+                                    "$displayName ${qualityLabel(resolution)}".trim(),
+                                    url,
+                                ) {
                                     this.headers = mapOf(
                                         "Referer" to "$referer/",
                                         "Origin" to referer,
@@ -203,9 +210,13 @@ class MovieBoxProvider : MainAPI() {
                         if (stream.optBoolean("vipLocked", false)) return@forEach
                         val resolution = stream.optString("resolutions").toIntOrNull()
                             ?: stream.optInt("resolution", 0)
-                        if (addedQualities.add(resolution)) {
+                        if (emittedUrls.add(url)) {
                             callback.invoke(
-                                newExtractorLink(displayName, displayName, url) {
+                                newExtractorLink(
+                                    displayName,
+                                    "$displayName ${qualityLabel(resolution)}".trim(),
+                                    url,
+                                ) {
                                     this.headers = mapOf(
                                         "Referer" to "$referer/",
                                         "Origin" to referer,
@@ -221,18 +232,20 @@ class MovieBoxProvider : MainAPI() {
                     (0 until array.length()).mapNotNull { array.optJSONObject(it) }.forEach { dash ->
                         val url = dash.optString("url").takeIf(String::isNotBlank) ?: return@forEach
                         if (dash.optBoolean("vipLocked", false)) return@forEach
-                        callback.invoke(
-                            newExtractorLink(
-                                displayName,
-                                "$displayName (Auto)",
-                                url,
-                            ) {
-                                this.headers = mapOf(
-                                    "Referer" to "$referer/",
-                                    "Origin" to referer,
-                                )
-                            },
-                        )
+                        if (emittedUrls.add(url)) {
+                            callback.invoke(
+                                newExtractorLink(
+                                    displayName,
+                                    "$displayName (Auto)".trim(),
+                                    url,
+                                ) {
+                                    this.headers = mapOf(
+                                        "Referer" to "$referer/",
+                                        "Origin" to referer,
+                                    )
+                                },
+                            )
+                        }
                     }
                 }
 
@@ -327,6 +340,15 @@ class MovieBoxProvider : MainAPI() {
             else -> language.uppercase()
         }
         return "MovieBox [$tag]"
+    }
+
+    /** Libellé humain de la résolution (480 → « 480p », 0 → vide). */
+    private fun qualityLabel(resolution: Int): String = when (resolution) {
+        0 -> ""
+        in 1..359 -> "${resolution}p"
+        in 360..719 -> "${resolution}p"
+        in 720..1079 -> "${resolution}p"
+        else -> "${resolution}p"
     }
 
     /** Récupère le jeton d'API MovieBox via le header x-user du point d'entrée des paquets. */
