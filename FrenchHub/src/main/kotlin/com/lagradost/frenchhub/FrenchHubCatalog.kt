@@ -27,17 +27,10 @@ import com.lagradost.cloudstream3.newTvSeriesSearchResponse
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.frenchhub.dotriv.DoTriv
-import com.lagradost.frenchhub.animesama.AnimeSamaProvider
-import com.lagradost.frenchhub.frenchanime.FrenchAnime
 import com.lagradost.frenchhub.frenchmanga.FrenchMangaProvider
 import com.lagradost.nikola.NikolaFrenchStreamProvider
-import com.lagradost.frenchhub.frembed.Frembed
-import com.lagradost.frenchhub.fsmirror.FsMirrorLol
-import com.lagradost.frenchhub.jourfilm.JourFilm
 import com.lagradost.frenchhub.movix.MovixProvider
 import com.lagradost.moviebox.MovieBoxProvider
-import com.lagradost.frenchhub.wiflix.WiflixProvider
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -68,16 +61,12 @@ class FrenchHubCatalog : MainAPI() {
         // Provider Nikola (Nikola17/cloudstream-frenchstream) : recherche directe
         // sur french-stream.one + matching TMDB robuste, éprouvé sur de nombreuses
         // fiches. Les lecteurs sont chargés en parallèle avec les autres sources.
+        // FS Mirror et les autres miroirs Datalife Engine du même site font partie
+        // de ce même provider (bascule automatique de miroir si le domaine principal
+        // tombe : french-stream.one, french-stream.pink, fstream.info).
         Entry("frenchstream", "French-Stream", NikolaFrenchStreamProvider()),
         Entry("movix", "Movix", MovixProvider()),
         Entry("frenchmanga", "French-Manga", FrenchMangaProvider()),
-        Entry("wiflix", "Wiflix", WiflixProvider()),
-        Entry("frembed", "Frembed", Frembed()),
-        Entry("frenchanime", "French Anime", FrenchAnime()),
-        Entry("fsmirror", "FS Mirror", FsMirrorLol()),
-        Entry("jourfilm", "JourFilm", JourFilm()),
-        Entry("dotriv", "DoTriv", DoTriv()),
-        Entry("animesama", "Anime Sama", AnimeSamaProvider()),
         Entry("moviebox", "MovieBox (VF)", MovieBoxProvider()),
     )
 
@@ -322,12 +311,6 @@ class FrenchHubCatalog : MainAPI() {
                 }
                 parts
             }
-            "frembed" -> Frembed.VideoLinkData(
-                tmdbId = media.tmdbId,
-                type = if (media.type == "movie") "movie" else "tv",
-                season = media.season,
-                episode = media.episode,
-            ).toJson()
             "movix" -> {
                 val base = movix.mainUrl.trimEnd('/')
                 if (media.type == "movie") {

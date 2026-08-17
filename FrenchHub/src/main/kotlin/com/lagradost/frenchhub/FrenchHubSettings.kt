@@ -10,17 +10,16 @@ internal object FrenchHubSettings {
 
     data class ProviderSpec(val key: String, val label: String)
 
+    // Wiflix, Frembed, FS Mirror, JourFilm, DoTriv, French Anime et Anime Sama
+    // ont été retirés : leurs domaines sont expirés, injoignables ou renvoyés
+    // des pages de parking (diagnostic du 17/08/2026). Leurs sources ne pouvaient
+    // plus produire aucun lecteur et masquaient les sources saines. Ils restent
+    // dans le code (dossiers com.lagradost.frenchhub.*) pour une réactivation
+    // facile si leurs domaines reviennent en ligne.
     val providers = listOf(
         ProviderSpec("frenchstream", "French-Stream"),
         ProviderSpec("movix", "Movix"),
         ProviderSpec("frenchmanga", "French-Manga"),
-        ProviderSpec("wiflix", "Wiflix"),
-        ProviderSpec("frembed", "Frembed"),
-        ProviderSpec("frenchanime", "French Anime"),
-        ProviderSpec("fsmirror", "FS Mirror"),
-        ProviderSpec("jourfilm", "JourFilm"),
-        ProviderSpec("dotriv", "DoTriv"),
-        ProviderSpec("animesama", "Anime Sama"),
         ProviderSpec("moviebox", "MovieBox (VF)"),
     )
 
