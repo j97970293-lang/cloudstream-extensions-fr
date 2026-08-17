@@ -159,20 +159,6 @@ class FrenchHubCatalog : MainAPI() {
             ?.toJsonObjects()
             ?.mapNotNull { it.optInt("season_number").takeIf { number -> number > 0 } }
             .orEmpty()
-        // Épisodes déjà présents sur French-Stream : le site fournit leurs
-        // lecteurs préchargés, ils se lancent instantanément sans recherche.
-        val covered = (providerByKey["frenchstream"]?.api as? NikolaFrenchStreamProvider)
-            ?.takeIf { FrenchHubSettings.isEnabled("frenchstream") }
-            ?.let { niko ->
-                runCatching {
-                    niko.coveredEpisodes(
-                        title,
-                        FrenchHubTmdb.year(details.optString("first_air_date")),
-                        seasonNumbers,
-                    )
-                }.getOrNull().orEmpty()
-            }
-            .orEmpty()
         val episodes = coroutineScope {
             seasonNumbers.chunked(4).flatMap { batch ->
                 batch.map { season ->
@@ -183,7 +169,6 @@ class FrenchHubCatalog : MainAPI() {
                             title,
                             imdbId,
                             details.optString("original_name").takeIf { it.isNotBlank() && it != title },
-                            covered,
                         )
                     }
                 }.awaitAll().flatten()
@@ -211,22 +196,20 @@ class FrenchHubCatalog : MainAPI() {
         title: String,
         imdbId: String?,
         originalTitle: String? = null,
-        covered: Map<Pair<Int, Int>, String> = emptyMap(),
     ): List<Episode> {
         val json = FrenchHubTmdb.season(id, season) ?: return emptyList()
         return json.optJSONArray("episodes")?.toJsonObjects()?.mapNotNull { item ->
             val number = item.optInt("episode_number").takeIf { it > 0 } ?: return@mapNotNull null
-            val data = covered[season to number]
-                ?: FrenchHubMediaData(
-                    tmdbId = id,
-                    type = "tv",
-                    title = title,
-                    originalTitle = originalTitle,
-                    imdbId = imdbId,
-                    season = season,
-                    episode = number,
-                    firstAired = item.optString("air_date").takeIf { it.isNotBlank() },
-                ).toJson()
+            val data = FrenchHubMediaData(
+                tmdbId = id,
+                type = "tv",
+                title = title,
+                originalTitle = originalTitle,
+                imdbId = imdbId,
+                season = season,
+                episode = number,
+                firstAired = item.optString("air_date").takeIf { it.isNotBlank() },
+            ).toJson()
             newEpisode(data) {
                 name = item.optString("name").ifBlank { "Épisode $number" }
                 this.season = season

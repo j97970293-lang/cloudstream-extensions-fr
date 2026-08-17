@@ -577,24 +577,8 @@ class NikolaFrenchStreamProvider : MainAPI() {
         if (!isSeries) {
             val contentId = extractContentId(url)
                 ?: throw ErrorLoadingException("Identifiant French-Stream absent de l'URL")
-            // Film : tenter l'API des lecteurs du site ; si elle échoue ou renvoie
-            // une fiche sans lecteur, basculer sur l'API Movix (même catalogue de
-            // lecteurs VF/VOSTFR) en utilisant l'identifiant TMDB de la fiche.
             val apiUrl = "$mainUrl/engine/ajax/film_api.php?id=$contentId"
-            val movieData = runCatching {
-                val json = fetchJson(apiUrl)
-                val players = json?.optJSONObject("players")
-                if (players != null && players.keys().asSequence().any { key ->
-                        players.optJSONObject(key)?.let { host ->
-                            host.has("default") || host.has("vff") || host.has("vfq") || host.has("vostfr")
-                        } == true
-                    }) {
-                    apiUrl
-                } else {
-                    val fallbackId = details?.optInt("id")?.takeIf { it > 0 }
-                    if (fallbackId != null) "movixfallback::$fallbackId" else apiUrl
-                }
-            }.getOrDefault(apiUrl)
+            val movieData = apiUrl
             return newMovieLoadResponse(canonicalTitle, url, TvType.Movie, movieData) {
                 posterUrl = tmdbPoster ?: poster
                 backgroundPosterUrl = background
@@ -657,44 +641,6 @@ class NikolaFrenchStreamProvider : MainAPI() {
         }
     }
 
-    /**
-     * Renvoie les épisodes de la série présents sur le site, avec leur payload
-     * de lecteurs déjà préchargé (JSON Nikola). Le catalogue peut ainsi marquer
-     * ces épisodes comme "jouables instantanément" au lieu de déclencher une
-     * recherche à l'ouverture de chaque épisode.
-     */
-    suspend fun coveredEpisodes(
-        seriesTitle: String,
-        year: Int?,
-        seasons: List<Int>,
-    ): Map<Pair<Int, Int>, String> {
-        val results = runCatching { searchResults(seriesTitle, enrich = false) }.getOrNull() ?: return emptyMap()
-        val match = results.firstOrNull { item ->
-            val key = FrenchStreamMetadata.normalizeTitle(item.name)
-            val target = FrenchStreamMetadata.normalizeTitle(seriesTitle)
-            key == target || key.contains(target) || target.contains(key)
-        }?.takeIf { candidate ->
-            val cardYear = searchYear(candidate)
-            year == null || cardYear == null || cardYear == year ||
-                Math.abs(cardYear - year) <= 1
-        }
-            ?: return emptyMap()
-        val load: List<Episode> = runCatching {
-            (load(match.url) as? TvSeriesLoadResponse)?.episodes.orEmpty()
-        }.getOrNull() ?: return emptyMap()
-        if (load.isEmpty()) return emptyMap()
-        val wanted = seasons.toSet()
-        return load.mapNotNull { episode ->
-            val season = episode.season ?: return@mapNotNull null
-            val number = episode.episode ?: return@mapNotNull null
-            if (season !in wanted) return@mapNotNull null
-            val payload = runCatching { org.json.JSONObject(episode.data) }.getOrNull()
-                ?: return@mapNotNull null
-            if (!payload.has("vf") && !payload.has("vostfr")) return@mapNotNull null
-            (season to number) to episode.data
-        }.toMap()
-    }
-
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -715,33 +661,6 @@ class NikolaFrenchStreamProvider : MainAPI() {
             if (json != null) {
                 FrenchStreamMetadata.movieLinks(json).forEach { (language, links) ->
                     groupedLinks.getOrPut(language) { mutableListOf() }.addAll(links)
-                }
-            }
-        } else if (data.startsWith("movixfallback::")) {
-            // Fallback API Movix (catalogue de lecteurs VF/VOSTFR partagé avec
-            // French-Stream) utilisé quand l'API du site a échoué au chargement.
-            val id = data.substringAfter("movixfallback::").trim()
-            if (id.isNotBlank()) {
-                runCatching {
-                    val response = app.get(
-                        "https://api.movix.fun/api/fstream/movie/$id",
-                        headers = mapOf(
-                            "Origin" to "https://movix.show",
-                            "Referer" to "https://movix.show/",
-                        ),
-                    )
-                    if (response.isSuccessful) JSONObject(response.text) else null
-                }.getOrNull()?.optJSONObject("players")?.let { players ->
-                    players.keys().forEach { lang ->
-                        val group = players.optJSONObject(lang) ?: return@forEach
-                        group.keys().forEach { key ->
-                            val item = group.optJSONObject(key) ?: return@forEach
-                            val urlValue = item.optString("url").takeIf(String::isNotBlank) ?: return@forEach
-                            if (urlValue.startsWith("http://") || urlValue.startsWith("https://")) {
-                                groupedLinks.getOrPut(lang.uppercase()) { mutableListOf() }.add(urlValue)
-                            }
-                        }
-                    }
                 }
             }
         } else if (data.contains("ep-data.php")) {

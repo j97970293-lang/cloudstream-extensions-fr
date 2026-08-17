@@ -6,13 +6,13 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
 import org.json.JSONObject
-import java.net.URLEncoder
 
 /**
- * Source MovieBox (api.h5.aoneroom.com), inspirée de l'implémentation
- * invokeMoviebox de CineStream (SaurabhKaperwan/CSX). Seuls les contenus en
- * AUDIO FRANÇAIS sont conservés : les résultats dont le suffixe de langue est
- * différent de « French » ([French] / [Multi] avec piste VF) sont ignorés.
+ * Source MovieBox, reprise à l'identique de l'implémentation invokeMoviebox de
+ * CineStream (SaurabhKaperwan/CSX) : API h5-api.aoneroom.com avec jeton x-user,
+ * recherche par sujet, endpoints /subject/download et /subject/play. Seule
+ * différence : les lecteurs dont la langue n'est pas française (VF, VOSTFR,
+ * VFF, Multi) sont écartés, y compris les sous-titres non français.
  */
 class MovieBoxProvider : MainAPI() {
     override var mainUrl = "https://h5-api.aoneroom.com"
@@ -23,6 +23,9 @@ class MovieBoxProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
     private val baseUrl get() = mainUrl.trimEnd('/')
+    private val seasonSuffixRegex = Regex("""\sS\d+(?:-S?\d+)*$""", RegexOption.IGNORE_CASE)
+
+    private val frenchLanguages = setOf("VF", "VOSTFR", "VFF", "MULTI", "FRENCH")
 
     override suspend fun search(query: String): List<SearchResponse> = emptyList()
 
@@ -33,8 +36,7 @@ class MovieBoxProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
         // data : « moviebox://{type}::{title} » (type = movie|tv)
-        val payload = data.removePrefix("moviebox://")
-        val parts = payload.split("::")
+        val parts = data.removePrefix("moviebox://").split("::")
         val type = parts.getOrNull(0) ?: return false
         val title = parts.getOrNull(1)?.takeIf(String::isNotBlank) ?: return false
         val season = parts.getOrNull(2)?.toIntOrNull()
@@ -44,39 +46,48 @@ class MovieBoxProvider : MainAPI() {
         val headers = baseHeaders(token)
         val subjectType = if (season != null) 2 else 1
 
-        val searchJson = runCatching {
+        val searchObj = runCatching {
             JSONObject(
                 app.post(
                     "$baseUrl/wefeed-h5api-bff/subject/search",
                     headers = headers,
-                    json = mapOf("keyword" to title, "page" to 1, "perPage" to 24, "subjectType" to subjectType),
+                    json = mapOf(
+                        "keyword" to title,
+                        "page" to 1,
+                        "perPage" to 24,
+                        "subjectType" to subjectType,
+                    ),
                 ).text,
             )
         }.getOrNull() ?: return false
 
-        val items = unwrap(searchJson).optJSONArray("items") ?: return false
+        val items = unwrap(searchObj).optJSONArray("items") ?: return false
+        val titleMatchRegex = Regex(
+            "^${Regex.escape(title)}(?:\\s+\\[([^\\]]+)])?$",
+            RegexOption.IGNORE_CASE,
+        )
+        // Comportement CineStream : un sujet par identifiant, sa langue étant
+        // celle du tag entre crochets de son titre (ex : « Oppenheimer [VF] »).
+        val subjectsById = mutableMapOf<String, String>()
+        for (i in 0 until items.length()) {
+            val item = items.optJSONObject(i) ?: continue
+            val id = item.optString("subjectId").takeIf(String::isNotBlank) ?: continue
+            val cleanTitle = item.optString("title", "").replace(seasonSuffixRegex, "")
+            val language = titleMatchRegex.find(cleanTitle)?.groupValues?.getOrNull(1) ?: "Original"
+            subjectsById.putIfAbsent(id, language)
+        }
 
-        // Le titre des résultats MovieBox porte la langue en suffixe
-        // crochets : « Le Cas Oppenheimer [French] ». On ne garde que
-        // l'audio français.
-        val titleRegex = Regex("^${Regex.escape(title)}(?:\\s+\\[([^\\]]+)])?$", RegexOption.IGNORE_CASE)
-        val frenchSubjects = items.toJsonObjects()
-            .mapNotNull { item ->
-                val subjectId = item.optString("subjectId").takeIf(String::isNotBlank) ?: return@mapNotNull null
-                val rawTitle = item.optString("title").replace(Regex("""\s*S\d+(?:-S?\d+)*$"""), "").trim()
-                val language = titleRegex.find(rawTitle)?.groupValues?.getOrNull(1) ?: "Original"
-                if (language.equals("French", ignoreCase = true) ||
-                    language.equals("Multi", ignoreCase = true) ||
-                    language.equals("VF", ignoreCase = true)
-                ) subjectId to language else null
-            }
-            .distinctBy { it.first }
+        // Les seuls contenus conservés sont ceux en AUDIO FRANÇAIS : VF, VOSTFR,
+        // VFF ou Multi. Tout le reste (Original, Anglais, etc.) est écarté.
+        val frenchSubjects = subjectsById.filter { (_, language) ->
+            language.uppercase() in frenchLanguages
+        }
 
         if (frenchSubjects.isEmpty()) return false
 
         frenchSubjects.forEach { (subjectId, language) ->
             runCatching {
-                val detailJson = runCatching {
+                val detailObj = runCatching {
                     JSONObject(
                         app.get(
                             "https://h5.aoneroom.com/wefeed-h5-bff/web/post/list/subject?id=$subjectId",
@@ -84,7 +95,7 @@ class MovieBoxProvider : MainAPI() {
                     )
                 }.getOrNull() ?: return@forEach
 
-                val detailPath = detailJson
+                val detailPath = detailObj
                     .optJSONObject("data")
                     ?.optJSONArray("items")
                     ?.optJSONObject(0)
@@ -97,72 +108,87 @@ class MovieBoxProvider : MainAPI() {
                     if (season != null) append("&se=$season&ep=$episode")
                     append("&detailPath=$detailPath")
                 }
-                val referer = "https://fmoviesunblocked.net/"
+                val referer = "https://fmoviesunblocked.net"
                 val playHeaders = headers + mapOf(
-                    "Referer" to referer,
-                    "Origin" to referer.trimEnd('/'),
+                    "Referer" to "$referer/",
+                    "Origin" to referer,
                 )
 
-                val downloadData = runCatching {
+                val downloadObj = runCatching {
                     unwrap(JSONObject(app.get("$baseUrl/wefeed-h5api-bff/subject/download?$params", headers = playHeaders).text))
                 }.getOrNull() ?: JSONObject()
-                val playData = runCatching {
+                val playObj = runCatching {
                     unwrap(JSONObject(app.get("$baseUrl/wefeed-h5api-bff/subject/play?$params", headers = playHeaders).text))
                 }.getOrNull() ?: JSONObject()
 
-                val name = "MovieBox [${language.ifBlank { "French" }}]"
-                val addedResolutions = mutableSetOf<Int>()
+                val displayName = "MovieBox [$language]"
+                val addedQualities = mutableSetOf<Int>()
 
-                downloadData.optJSONArray("downloads")?.let { array ->
+                downloadObj.optJSONArray("downloads")?.let { array ->
                     (0 until array.length()).mapNotNull { array.optJSONObject(it) }.forEach { download ->
                         val url = download.optString("url").takeIf(String::isNotBlank) ?: return@forEach
-                        if (download.optBoolean("vipLocked")) return@forEach
+                        if (download.optBoolean("vipLocked", false)) return@forEach
                         val resolution = download.optInt("resolution")
-                        if (addedResolutions.add(resolution)) {
-                            callback(extractorLink(name, url, referer, resolution))
+                        if (addedQualities.add(resolution)) {
+                            callback.invoke(
+                                newExtractorLink(displayName, displayName, url) {
+                                    this.headers = mapOf(
+                                        "Referer" to "$referer/",
+                                        "Origin" to referer,
+                                    )
+                                    this.quality = resolution
+                                },
+                            )
                         }
                     }
                 }
 
-                playData.optJSONArray("streams")?.let { array ->
+                playObj.optJSONArray("streams")?.let { array ->
                     (0 until array.length()).mapNotNull { array.optJSONObject(it) }.forEach { stream ->
                         val url = stream.optString("url").takeIf(String::isNotBlank) ?: return@forEach
-                        if (stream.optBoolean("vipLocked")) return@forEach
+                        if (stream.optBoolean("vipLocked", false)) return@forEach
                         val resolution = stream.optString("resolutions").toIntOrNull()
                             ?: stream.optInt("resolution", 0)
-                        if (addedResolutions.add(resolution)) {
-                            callback(extractorLink(name, url, referer, resolution))
+                        if (addedQualities.add(resolution)) {
+                            callback.invoke(
+                                newExtractorLink(displayName, displayName, url) {
+                                    this.headers = mapOf(
+                                        "Referer" to "$referer/",
+                                        "Origin" to referer,
+                                    )
+                                    this.quality = resolution
+                                },
+                            )
                         }
                     }
                 }
 
-                playData.optJSONArray("dash")?.let { array ->
+                playObj.optJSONArray("dash")?.let { array ->
                     (0 until array.length()).mapNotNull { array.optJSONObject(it) }.forEach { dash ->
                         val url = dash.optString("url").takeIf(String::isNotBlank) ?: return@forEach
-                        if (dash.optBoolean("vipLocked")) return@forEach
-                        callback(
-                            @Suppress("DEPRECATION_ERROR")
-                            ExtractorLink(
-                                "MovieBox",
-                                "$name (Auto)",
+                        if (dash.optBoolean("vipLocked", false)) return@forEach
+                        callback.invoke(
+                            newExtractorLink(
+                                displayName,
+                                "$displayName (Auto)",
                                 url,
-                                referer.trimEnd('/'),
-                                Qualities.Unknown.value,
-                                ExtractorLinkType.M3U8,
-                                headers = mapOf("Referer" to referer, "Origin" to referer.trimEnd('/')),
-                            ),
+                            ) {
+                                this.headers = mapOf(
+                                    "Referer" to "$referer/",
+                                    "Origin" to referer,
+                                )
+                            },
                         )
                     }
                 }
 
-                downloadData.optJSONArray("captions")?.let { array ->
+                // Sous-titres : seuls ceux en français sont conservés.
+                downloadObj.optJSONArray("captions")?.let { array ->
                     (0 until array.length()).mapNotNull { array.optJSONObject(it) }.forEach { caption ->
                         val url = caption.optString("url").takeIf(String::isNotBlank) ?: return@forEach
-                        val langName = caption.optString("lanName").ifBlank { caption.optString("lan") }
-                        if (langName.isNotBlank()) {
-                            subtitleCallback(
-                                SubtitleFile(langName, url),
-                            )
+                        val languageName = caption.optString("lanName").ifBlank { caption.optString("lan") }
+                        if (languageName.isNotBlank() && isFrenchLanguage(languageName)) {
+                            subtitleCallback(SubtitleFile(languageName, url))
                         }
                     }
                 }
@@ -171,33 +197,12 @@ class MovieBoxProvider : MainAPI() {
         return true
     }
 
-    private fun extractorLink(name: String, url: String, referer: String, resolution: Int): ExtractorLink {
-        @Suppress("DEPRECATION_ERROR")
-        return ExtractorLink(
-            "MovieBox",
-            name,
-            url,
-            referer.trimEnd('/'),
-            when {
-                resolution >= 2160 -> Qualities.P2160.value
-                resolution >= 1080 -> Qualities.P1080.value
-                resolution >= 720 -> Qualities.P720.value
-                resolution >= 480 -> Qualities.P480.value
-                else -> Qualities.Unknown.value
-            },
-            if (url.contains(".m3u8", ignoreCase = true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO,
-            headers = mapOf("Referer" to referer, "Origin" to referer.trimEnd('/')),
-        )
-    }
-
     /** Récupère le jeton d'API MovieBox via le header x-user du point d'entrée des paquets. */
-    private suspend fun fetchToken(): String? {
-        val token = runCatching {
-            val response = app.get("$baseUrl/wefeed-h5api-bff/app/get-latest-app-pkgs?app_name=moviebox")
-            response.headers.get("x-user")?.let { JSONObject(it).optString("token") }?.takeIf(String::isNotBlank)
-        }.getOrNull()
-        return token
-    }
+    private suspend fun fetchToken(): String? = runCatching {
+        val xUser = app.get("$baseUrl/wefeed-h5api-bff/app/get-latest-app-pkgs?app_name=moviebox")
+            .headers.get("x-user")
+        JSONObject(xUser ?: return null).optString("token").takeIf(String::isNotBlank)
+    }.getOrNull()
 
     private fun baseHeaders(token: String): Map<String, String> = mapOf(
         "X-Client-Info" to """{"timezone":"Africa/Nairobi"}""",
@@ -215,7 +220,10 @@ class MovieBoxProvider : MainAPI() {
         return data.optJSONObject("data") ?: data
     }
 
-    private fun org.json.JSONArray.toJsonObjects(): List<JSONObject> {
-        return (0 until length()).mapNotNull { optJSONObject(it) }
+    /** Accepte le français sous toutes ses formes usuelles dans les sous-titres. */
+    private fun isFrenchLanguage(language: String): Boolean {
+        val normalized = language.uppercase()
+        return "FR" in normalized || "FRENCH" in normalized || "VF" in normalized ||
+            "VOSTFR" in normalized || "MULTI" in normalized
     }
 }
