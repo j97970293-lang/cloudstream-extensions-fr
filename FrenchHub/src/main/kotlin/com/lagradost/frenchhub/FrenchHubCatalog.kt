@@ -34,11 +34,7 @@ import com.lagradost.nikola.NikolaFrenchStreamProvider
 import com.lagradost.frenchhub.movix.MovixProvider
 import com.lagradost.moviebox.MovieBoxProvider
 import com.lagradost.frenchhub.animesama.AnimeSamaProvider
-import com.lagradost.frenchhub.wiflix.WiflixProvider
-import com.lagradost.frenchhub.frenchanime.FrenchAnime
-import com.lagradost.frenchhub.jourfilm.JourFilm
 import com.lagradost.frenchhub.frembed.Frembed
-import com.lagradost.frenchhub.dotriv.DoTriv
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -72,12 +68,9 @@ class FrenchHubCatalog : MainAPI() {
     private val animeSama = AnimeSamaProvider()
     // Providers additionnels activés via le menu Providers : leur matching passe
     // par le matching TMDB du catalogue (titre FR + original + variantes),
-    // exactement comme French-Stream et Movix.
-    private val wiflix = WiflixProvider()
-    private val frenchAnime = FrenchAnime()
-    private val jourFilm = JourFilm()
+    // exactement comme French-Stream et Movix. Les sites morts ou bloqués
+    // (Wiflix/Flemmix, French Anime, 1jour1Film, DoTriv) ont été retirés.
     private val frembed = Frembed()
-    private val doTriv = DoTriv()
 
     private val providers = listOf(
         // Provider Nikola (Nikola17/cloudstream-frenchstream) : recherche directe
@@ -91,11 +84,7 @@ class FrenchHubCatalog : MainAPI() {
         Entry("frenchmanga", "French-Manga", frenchManga),
         Entry("moviebox", "MovieBox", movieBox),
         Entry("animesama", "Anime-Sama", animeSama),
-        Entry("wiflix", "Wiflix", wiflix),
-        Entry("frenchanime", "French Anime", frenchAnime),
-        Entry("jourfilm", "1jour1Film", jourFilm),
         Entry("frembed", "Frembed", frembed),
-        Entry("dotriv", "DoTriv", doTriv),
     )
 
     private val providerByKey = providers.associateBy { it.key }
@@ -334,6 +323,11 @@ class FrenchHubCatalog : MainAPI() {
         // masque tous les lecteurs des autres sources.
         val seenLinks = Collections.synchronizedSet(mutableSetOf<String>())
         val seenSubtitles = Collections.synchronizedSet(mutableSetOf<String>())
+        // Les mêmes vidéos sont souvent servies par plusieurs CDN (vidzy-1,
+        // vidzy-2, …) avec des URLs distinctes — le dédup par URL seule les
+        // laisse passer tous. On conserve donc aussi UN lecteur par fichier
+        // vidéo (hôte + chemin), toutes sources confondues.
+        val seenFiles = Collections.synchronizedSet(mutableSetOf<String>())
         // Si tous les providers ont été désactivés (menu Providers), aucun lecteur
         // ne pourrait s'afficher : dans ce cas, réactiver la configuration par
         // défaut afin de ne jamais laisser l'utilisateur sans aucun lecteur.
@@ -362,7 +356,20 @@ class FrenchHubCatalog : MainAPI() {
                                     if (seenSubtitles.add(subtitle.url)) subtitleCallback(subtitle)
                                 },
                                 { link ->
-                                    if (seenLinks.add("${entry.key}|${link.url}")) callback(link)
+                                    val pathKey = link.url
+                                        .substringBefore("?")
+                                        .substringBefore("#")
+                                        .let { url ->
+                                            val host = java.net.URI(url)
+                                                .takeIf { it.isAbsolute }
+                                                ?.host?.lowercase()
+                                            val path = java.net.URI(url)
+                                                .takeIf { it.isAbsolute }
+                                                ?.path
+                                            "$host|$path"
+                                        }
+                                    if (seenFiles.add(pathKey) &&
+                                        seenLinks.add("${entry.key}|${link.url}")) callback(link)
                                 },
                             )
                         }
@@ -418,6 +425,23 @@ class FrenchHubCatalog : MainAPI() {
                     "$base/tv/${media.tmdbId}/${media.season}/${media.episode}"
                 } else {
                     null
+                }
+            }
+            "frembed" -> {
+                // Frembed charge ses fiches directement par ID TMDB via son API
+                // publique (/api/public/v1/movies|tv/{tmdbId}) : la correspondance
+                // est exacte, sans passer par la recherche par titre.
+                val cleanName = (media.title ?: media.originalTitle ?: return null)
+                    .lowercase()
+                    .replace(Regex("[^a-z0-9\\s]"), "")
+                    .replace(" ", "-")
+                val base = frembed.mainUrl.trimEnd('/')
+                when (media.type) {
+                    "movie" -> "$base/movies/$cleanName/${media.tmdbId}"
+                    "tv" -> if (media.season != null && media.episode != null) {
+                        "$base/tv-show/$cleanName/${media.tmdbId}"
+                    } else null
+                    else -> null
                 }
             }
             else -> null

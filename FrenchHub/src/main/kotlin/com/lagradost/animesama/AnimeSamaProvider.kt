@@ -322,22 +322,31 @@ class AnimeSamaProvider : MainAPI() {
                 add("$mainUrl/catalogue/$slug/$lang/")
                 add("$mainUrl/catalogue/$slug/")
             }
+            val episodeJsRef = Regex("""episodes\.js\??(?:filever=\d+)?""")
             for (pageUrl in pageUrls) {
                 val episodeScript = runCatching {
-                    app.get(pageUrl, headers = browserHeaders).document
-                        .selectFirst("#sousBlocMiddle script[src*='episodes.js']")
+                    val doc = app.get(pageUrl, headers = browserHeaders).document
+                    // Le tag script peut être dans #sousBlocMiddle ou ailleurs :
+                    // chercher d'abord le sélecteur précis, puis toute la page.
+                    val attr = doc.selectFirst("#sousBlocMiddle script[src*='episodes.js']")
                         ?.attr("src")?.takeIf(String::isNotBlank)
-                        ?.let { attr ->
-                            if (attr.startsWith("http")) attr
+                        ?: episodeJsRef.find(doc.html())?.let { match ->
+                            val snippet = match.value
+                            if (snippet.startsWith("http")) snippet
                             else {
-                                val root = attr.substringBefore("/episodes.js")
-                                "$pageUrl${if (root.isBlank()) "" else "$root/"}episodes.js"
+                                val pagePath = java.net.URI(pageUrl).path
+                                val dir = pagePath.substringBeforeLast('/')
+                                val file = snippet.substringAfterLast('/').substringBefore('?')
+                                "$dir/$file"
                             }
                         }
+                    attr
                 }.getOrNull()
                 if (episodeScript.isNullOrBlank()) continue
+                val scriptUrl = if (episodeScript.startsWith("http")) episodeScript
+                else "$mainUrl$episodeScript"
                 val js = runCatching {
-                    app.get(episodeScript, headers = browserHeaders).text
+                    app.get(scriptUrl, headers = browserHeaders).text
                 }.getOrNull().orEmpty()
                 if (js.isBlank()) continue
                 val vars = varRegex.findAll(js).mapNotNull { match ->

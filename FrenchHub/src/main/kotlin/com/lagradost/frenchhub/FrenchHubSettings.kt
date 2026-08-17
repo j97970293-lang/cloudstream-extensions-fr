@@ -22,19 +22,11 @@ internal object FrenchHubSettings {
         ProviderSpec("frenchmanga", "French-Manga"),
         ProviderSpec("moviebox", "MovieBox"),
         ProviderSpec("animesama", "Anime-Sama (VF/VOSTFR)"),
-        ProviderSpec("wiflix", "Wiflix"),
-        ProviderSpec("frenchanime", "French Anime"),
-        ProviderSpec("jourfilm", "1jour1Film"),
         ProviderSpec("frembed", "Frembed"),
-        ProviderSpec("dotriv", "DoTriv"),
     )
 
     val apiMainUrls = mapOf(
-        "wiflix" to "https://flemmix.bond",
-        "frenchanime" to "https://french-anime.com",
-        "jourfilm" to "https://1jour1film0426c.site",
-        "frembed" to "https://frembed.skin",
-        "dotriv" to "https://dospiv.com",
+        "frembed" to "https://frembed.casa",
     )
 
     /** Domaines éditables depuis les réglages de l'extension. */
@@ -65,13 +57,35 @@ internal object FrenchHubSettings {
     }
 
     fun show(context: Context, onSaved: () -> Unit) {
-        val checked = providers.map { isEnabled(it.key) }.toBooleanArray()
+        val checked = providers.map { isEnabled(it.key) }.toMutableList()
+        // Un seul contenu scrollable : cases des providers puis libellés et
+        // champs de domaines. setMultiChoiceItems + setView sur le même
+        // AlertDialog cassent le scroll (les cases étaient placées dans une
+        // liste séparée non scrollable) — on construit donc les CheckBox
+        // manuellement dans le layout commun.
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(32, 8, 32, 0)
         }
+        val checkboxes = mutableListOf<android.widget.CheckBox>()
+        providers.forEachIndexed { index, provider ->
+            val box = android.widget.CheckBox(context).apply {
+                text = provider.label
+                isChecked = checked[index]
+                setOnCheckedChangeListener { _, value ->
+                    checked[index] = value
+                }
+            }
+            root.addView(box)
+            checkboxes.add(box)
+        }
         val domainInputs = linkedMapOf<String, EditText>()
         domains.forEach { spec ->
+            val label = android.widget.TextView(context).apply {
+                text = "${spec.label} :"
+                setPadding(0, 12, 0, 0)
+            }
+            root.addView(label)
             val input = EditText(context).apply {
                 hint = spec.defaultUrl
                 setText(domain(spec.key))
@@ -87,9 +101,6 @@ internal object FrenchHubSettings {
         val scroll = ScrollView(context).apply { addView(root) }
         AlertDialogBuilder(context)
             .setTitle("FrenchHub — Providers et domaines")
-            .setMultiChoiceItems(providers.map { it.label }.toTypedArray(), checked) { _, index, value ->
-                checked[index] = value
-            }
             .setView(scroll)
             .setPositiveButton("Enregistrer") { _, _ ->
                 providers.forEachIndexed { index, provider ->
